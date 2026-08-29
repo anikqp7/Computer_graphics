@@ -13,7 +13,7 @@ int main()
 
     while(x1<=x2)
     {
-        putpixel(x1,y1,WHITE);
+        putpixel(x1,y1,RED);
         x1++;
 
         if(p<0)
