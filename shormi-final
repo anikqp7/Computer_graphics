@@ -1,0 +1,949 @@
+#include <graphics.h>
+#include <conio.h>
+#include <windows.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <time.h>
+
+// ============================================================
+// WATERFALL PARADISE
+// Interactive Nature Animation Simulation - Final Version
+// ============================================================
+
+const int WIDTH  = 1200;
+const int HEIGHT = 700;
+
+bool nightMode = false;
+bool rainOn    = false;
+
+int cloudX1 = 80;
+int cloudX2 = 650;
+int birdX   = 150;
+
+int fishX1 = 100;
+int fishX2 = 850;
+
+int waterfallFrame = 0;
+int waveFrame      = 0;
+int rainFrame      = 0;
+
+int waterSpeed  = 3;
+int currentPage = 0;
+
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+int rgb(int r, int g, int b)
+{
+    return COLOR(r, g, b);
+}
+
+void filledCircle(int x, int y, int radius, int color)
+{
+    setcolor(color);
+    setfillstyle(SOLID_FILL, color);
+    fillellipse(x, y, radius, radius);
+}
+
+
+// ============================================================
+// SKY
+// ============================================================
+
+void drawSky()
+{
+    int topR, topG, topB;
+    int botR, botG, botB;
+
+    if (!nightMode)
+    {
+        topR = 70;  topG = 140; topB = 210;
+        botR = 190; botG = 225; botB = 240;
+    }
+    else
+    {
+        topR = 6;   topG = 15;  topB = 38;
+        botR = 30;  botG = 55;  botB = 85;
+    }
+
+    for (int y = 0; y < 505; y += 5)
+    {
+        int r = topR + (botR - topR) * y / 505;
+        int g = topG + (botG - topG) * y / 505;
+        int b = topB + (botB - topB) * y / 505;
+
+        setfillstyle(SOLID_FILL, rgb(r, g, b));
+        bar(0, y, WIDTH, y + 5);
+    }
+}
+
+
+// ============================================================
+// SUN / MOON / STARS
+// ============================================================
+
+void drawSunMoon()
+{
+    if (!nightMode)
+    {
+        filledCircle(1010, 105, 60, rgb(255, 210, 70));
+        filledCircle(1010, 105, 47, rgb(255, 230, 100));
+        filledCircle(1010, 105, 34, rgb(255, 245, 175));
+    }
+    else
+    {
+        int stars[][2] =
+        {
+            {70,70}, {150,120}, {230,55}, {315,120},
+            {390,55},{475,140}, {565,70}, {655,110},
+            {745,50},{835,150},{900,70},{1090,160},
+            {1140,65},{520,185},{275,180},{960,200},
+            {430,90},{620,170},{800,90},{140,190}
+        };
+
+        for (int i = 0; i < 20; i++)
+        {
+            int r = ((waveFrame + i) % 5 == 0) ? 2 : 1;
+            filledCircle(stars[i][0], stars[i][1], r,
+                         rgb(240, 240, 210));
+        }
+
+        // Moon
+        filledCircle(1010, 105, 45, rgb(245, 245, 210));
+        filledCircle(1028, 90,  42, rgb(15, 30, 60));
+    }
+}
+
+
+// ============================================================
+// CLOUDS
+// ============================================================
+
+void drawOneCloud(int x, int y, int size)
+{
+    int c  = nightMode ? rgb(105, 115, 135)
+                       : rgb(245, 248, 250);
+
+    int sh = nightMode ? rgb(70, 80, 100)
+                       : rgb(200, 218, 228);
+
+    setfillstyle(SOLID_FILL, sh);
+    fillellipse(x + 45, y + 12, 55 * size / 100,
+                                17 * size / 100);
+
+    setfillstyle(SOLID_FILL, c);
+
+    fillellipse(x,                   y,
+                35 * size / 100, 20 * size / 100);
+    fillellipse(x + 35 * size / 100, y - 14 * size / 100,
+                38 * size / 100, 30 * size / 100);
+    fillellipse(x + 72 * size / 100, y,
+                42 * size / 100, 23 * size / 100);
+    fillellipse(x + 105 * size / 100,y + 3,
+                30 * size / 100, 18 * size / 100);
+
+    bar(x, y,
+        x + 105 * size / 100,
+        y + 15 * size / 100);
+}
+
+void drawClouds()
+{
+    drawOneCloud(cloudX1, 115, 85);
+    drawOneCloud(cloudX2, 155, 100);
+    drawOneCloud((cloudX1 + 430) % 1350 - 100, 65, 60);
+}
+
+
+// ============================================================
+// MOUNTAINS
+// ============================================================
+
+void drawMountains()
+{
+    // ---------- Back mountains ----------
+    int back = nightMode ? rgb(50, 68, 82)
+                         : rgb(105, 135, 148);
+
+    setfillstyle(SOLID_FILL, back);
+
+    int b[] =
+    {
+        0,390, 150,190, 285,370, 430,150,
+        590,370,750,200,930,380,1070,215,
+        1200,365,1200,470,0,470
+    };
+    fillpoly(11, b);
+
+    // Snow patches
+    int snow = nightMode ? rgb(150, 160, 170)
+                         : rgb(225, 235, 235);
+
+    setfillstyle(SOLID_FILL, snow);
+
+    int s1[] = {402,185,430,150,462,190,
+                445,181,431,198,416,180};
+    fillpoly(6, s1);
+
+    int s2[] = {726,232,750,200,781,236,
+                760,226,748,244};
+    fillpoly(5, s2);
+
+    // ---------- Front mountain ----------
+    int front = nightMode ? rgb(37, 69, 52)
+                          : rgb(58, 112, 70);
+
+    setfillstyle(SOLID_FILL, front);
+
+    int f[] =
+    {
+        0,450, 170,265, 300,425, 470,225,
+        600,415,735,250,890,430,1035,270,
+        1200,440,1200,525,0,525
+    };
+    fillpoly(11, f);
+
+    // Mountain shadow sides
+    int shadow = nightMode ? rgb(22, 45, 35)
+                           : rgb(38, 85, 55);
+
+    setfillstyle(SOLID_FILL, shadow);
+
+    int s3[] = {470,225,600,415,535,390,
+                465,300,390,380};
+    fillpoly(5, s3);
+
+    int s4[] = {735,250,890,430,815,405,
+                740,315,660,400};
+    fillpoly(5, s4);
+
+    // ---------- Rocky ridges ----------
+    int rDark  = nightMode ? rgb(30, 50, 40)
+                           : rgb(45, 78, 58);
+    int rLight = nightMode ? rgb(65, 75, 68)
+                           : rgb(120, 128, 105);
+
+    setcolor(rDark);
+    line(170,265,135,330); line(135,330,95,370);
+    line(470,225,440,290); line(440,290,395,345);
+    line(735,250,700,315); line(700,315,655,365);
+    line(1035,270,990,330);line(990,330,950,380);
+
+    setcolor(rLight);
+    line(175,275,205,325); line(205,325,250,370);
+    line(475,235,510,295); line(510,295,550,340);
+    line(740,260,775,315); line(775,315,820,370);
+
+    // ---------- Distant pine tree line ----------
+    int pine = nightMode ? rgb(18,48,35) : rgb(25,75,42);
+    setcolor(pine);
+
+    for (int x = 40; x < 1180; x += 45)
+    {
+        int baseY = 455 + (x % 25);
+        int h     = 18 + (x % 13);
+
+        line(x, baseY, x, baseY - h);
+        line(x, baseY - h + 5,  x - 6, baseY - h + 13);
+        line(x, baseY - h + 5,  x + 6, baseY - h + 13);
+        line(x, baseY - h + 10, x - 8, baseY - h + 19);
+        line(x, baseY - h + 10, x + 8, baseY - h + 19);
+    }
+}
+
+
+// ============================================================
+// CLIFF
+// ============================================================
+
+void drawCliff()
+{
+    int rock  = nightMode ? rgb(45, 50, 45)
+                          : rgb(82, 85, 68);
+    int light = nightMode ? rgb(65, 68, 60)
+                          : rgb(115, 110, 82);
+
+    setfillstyle(SOLID_FILL, rock);
+
+    int L[] = {420,315,510,270,540,300,
+               532,510,415,525,378,445};
+    fillpoly(6, L);
+
+    int R[] = {660,290,708,308,808,445,
+               755,520,662,510};
+    fillpoly(5, R);
+
+    setfillstyle(SOLID_FILL, light);
+
+    int d1[] = {442,342,505,300,493,382,448,405};
+    fillpoly(4, d1);
+
+    int d2[] = {680,332,720,352,762,432,700,408};
+    fillpoly(4, d2);
+
+    // Moss dots
+    int moss = nightMode ? rgb(35, 78, 44)
+                         : rgb(50, 130, 55);
+
+    for (int i = 0; i < 25; i++)
+    {
+        int x = 400 + (i * 37) % 350;
+        int y = 320 + (i * 53) % 180;
+
+        if (x < 520 || x > 675)
+            filledCircle(x, y, 3, moss);
+    }
+}
+
+
+// ============================================================
+// RIVER
+// ============================================================
+
+void drawRiver()
+{
+    int upper = nightMode ? rgb(25, 78, 108)
+                          : rgb(38, 145, 195);
+
+    int deep  = nightMode ? rgb(17, 58, 88)
+                          : rgb(24, 108, 165);
+
+    setfillstyle(SOLID_FILL, upper);
+    bar(0, 505, WIDTH, HEIGHT);
+
+    setfillstyle(SOLID_FILL, deep);
+    bar(0, 615, WIDTH, HEIGHT);
+
+    // Waves
+    for (int row = 0; row < 6; row++)
+    {
+        int y = 530 + row * 27;
+        int offset = (waveFrame * ((row % 2) ? 2 : 1)) % 70;
+
+        for (int x = -70 + offset; x < WIDTH; x += 80)
+        {
+            if (row % 2 == 0)
+                setcolor(rgb(135, 205, 225));
+            else
+                setcolor(rgb(75, 175, 210));
+
+            arc(x, y, 15, 165, 28);
+        }
+    }
+
+    // Waterfall reflection
+    for (int i = 0; i < 7; i++)
+    {
+        int w = 100 - i * 9;
+        int y = 565 + i * 18;
+
+        if (i % 2)
+            setcolor(rgb(120, 195, 220));
+        else
+            setcolor(rgb(170, 220, 235));
+
+        line(600 - w / 2, y, 600 + w / 2, y);
+    }
+
+    // Shimmer
+    for (int i = 0; i < 35; i++)
+    {
+        int x = (i * 97 + waveFrame * (1 + i % 2)) % WIDTH;
+        int y = 535 + (i * 37) % 145;
+        int L = 10 + (i * 13) % 35;
+
+        if (i % 3 == 0)
+            setcolor(rgb(170, 220, 235));
+        else
+            setcolor(rgb(75, 165, 200));
+
+        line(x, y, x + L, y);
+    }
+
+    // Foreground ripples
+    setcolor(rgb(145, 210, 230));
+
+    for (int x = 30; x < WIDTH; x += 120)
+    {
+        int m = (waveFrame + x) % 40;
+        arc(x + m, 670, 20, 160, 30);
+    }
+}
+
+
+// ============================================================
+// WATERFALL
+// ============================================================
+
+void drawWaterfall()
+{
+    // Darker back layer
+    int shadow = nightMode ? rgb(55, 105, 135)
+                           : rgb(75, 155, 190);
+
+    setfillstyle(SOLID_FILL, shadow);
+
+    int body[] =
+    {
+        535,285,665,285,668,350,660,410,
+        670,470,658,525,640,545,550,545,
+        532,520,540,455,530,395,538,340
+    };
+    fillpoly(12, body);
+
+    // Main lighter water
+    int water = nightMode ? rgb(105, 165, 195)
+                          : rgb(135, 210, 235);
+
+    setfillstyle(SOLID_FILL, water);
+
+    int center[] =
+    {
+        550,285,650,285,654,345,646,405,
+        657,465,648,520,635,540,558,540,
+        545,515,550,450,542,395
+    };
+    fillpoly(11, center);
+
+    // Flowing streams
+    for (int i = 0; i < 18; i++)
+    {
+        int x = 542 + i * 7;
+        int off = (waterfallFrame * waterSpeed + i * 19) % 55;
+
+        int col;
+        if      (i % 4 == 0) col = rgb(245, 252, 255);
+        else if (i % 3 == 0) col = rgb(195, 235, 248);
+        else                 col = rgb(155, 215, 240);
+
+        setcolor(col);
+        setlinestyle(SOLID_LINE, 0, (i % 5 == 0) ? 3 : 1);
+
+        for (int y = 290 + off; y < 515; y += 55)
+        {
+            int bend = (i % 3) - 1;
+            line(x, y, x + bend * 3, y + 25 + (i % 4) * 3);
+        }
+    }
+
+    setlinestyle(SOLID_LINE, 0, 1);
+
+    // Bright thin streams
+    setcolor(rgb(235, 250, 255));
+
+    for (int i = 0; i < 7; i++)
+    {
+        int x = 550 + i * 17;
+        int s = (waterfallFrame * waterSpeed + i * 15) % 40;
+
+        for (int y = 300 + s; y < 500; y += 60)
+            line(x, y, x - 2, y + 30);
+    }
+
+    // Foam
+    for (int i = 0; i < 25; i++)
+    {
+        int x = 510 + (i * 37 + waterfallFrame * 2) % 190;
+        int y = 525 + (i * 17) % 28;
+        int r = 5 + i % 6;
+
+        int c = (i % 3 == 0) ? WHITE : rgb(210, 240, 248);
+        filledCircle(x, y, r, c);
+    }
+
+    // Splash
+    for (int i = 0; i < 35; i++)
+    {
+        int x = 600 + ((i * 43 + waterfallFrame * 5) % 220) - 110;
+        int d = (i * 23 + waterfallFrame * 3) % 75;
+        int y = 535 - d;
+
+        int s = (i % 5 == 0) ? 3 : 1;
+        filledCircle(x, y, s, rgb(225, 245, 250));
+    }
+
+    // Mist
+    int mist = nightMode ? rgb(130, 160, 170)
+                         : rgb(205, 230, 235);
+
+    setfillstyle(SOLID_FILL, mist);
+
+    fillellipse(525, 545, 60, 11);
+    fillellipse(575, 550, 75, 15);
+    fillellipse(635, 549, 85, 16);
+    fillellipse(690, 545, 55, 10);
+}
+
+
+// ============================================================
+// TREE
+// ============================================================
+
+void drawTree(int x, int groundY, int scale)
+{
+    int trunk = nightMode ? rgb(65, 45, 30)
+                          : rgb(100, 62, 32);
+
+    int h = 130 * scale / 100;
+    int w = 20  * scale / 100;
+
+    setfillstyle(SOLID_FILL, trunk);
+    int t[] =
+    {
+        x - w,     groundY,
+        x - w / 2, groundY - h,
+        x + w / 2, groundY - h,
+        x + w,     groundY
+    };
+    fillpoly(4, t);
+
+    // Branches
+    setcolor(trunk);
+    setlinestyle(SOLID_LINE, 0, 3);
+    line(x, groundY - h + 40 * scale / 100,
+         x - 35 * scale / 100,
+         groundY - h + 5 * scale / 100);
+
+    line(x, groundY - h + 55 * scale / 100,
+         x + 40 * scale / 100,
+         groundY - h + 20 * scale / 100);
+
+    setlinestyle(SOLID_LINE, 0, 1);
+
+    // Leaves
+    int g1 = nightMode ? rgb(18,60,35)  : rgb(25,92,42);
+    int g2 = nightMode ? rgb(26,78,43)  : rgb(38,128,50);
+    int g3 = nightMode ? rgb(38,95,49)  : rgb(70,158,62);
+
+    int lx[] = {-45,-20,15,45,-55,-25,10,50,-35,0,35};
+    int ly[] = {-110,-145,-150,-115,-80,-105,
+                -100,-75,-65,-80,-60};
+
+    for (int i = 0; i < 11; i++)
+    {
+        int c;
+        if      (i % 3 == 0) c = g3;
+        else if (i % 2 == 0) c = g2;
+        else                 c = g1;
+
+        filledCircle(
+            x + lx[i] * scale / 100,
+            groundY + ly[i] * scale / 100,
+            28 * scale / 100, c);
+    }
+}
+
+
+// ============================================================
+// LAND
+// ============================================================
+
+void drawGrassArea()
+{
+    int ground = nightMode ? rgb(27, 65, 37)
+                           : rgb(46, 115, 49);
+
+    setfillstyle(SOLID_FILL, ground);
+
+    int L[] = {0,500,180,500,260,530,
+               190,555,90,548,0,565};
+    fillpoly(6, L);
+
+    int R[] = {810,515,950,490,1200,495,
+               1200,565,1050,550,930,560};
+    fillpoly(6, R);
+
+    // Grass blades
+    int grass = nightMode ? rgb(45, 90, 48)
+                          : rgb(65, 145, 55);
+    setcolor(grass);
+
+    for (int i = 0; i < 55; i++)
+    {
+        int x = (i * 47) % 1200;
+
+        if (x < 250 || x > 900)
+        {
+            int y = 508 + (i % 4) * 8;
+            line(x, y, x - 4, y - 12);
+            line(x, y, x + 2, y - 15);
+            line(x, y, x + 6, y - 10);
+        }
+    }
+}
+
+
+// ============================================================
+// BUSH
+// ============================================================
+
+void drawBush(int x, int y, int size)
+{
+    int d = nightMode ? rgb(18, 60, 35)  : rgb(25, 92, 42);
+    int m = nightMode ? rgb(30, 78, 42)  : rgb(45, 130, 50);
+    int l = nightMode ? rgb(38, 90, 45)  : rgb(75, 155, 60);
+
+    filledCircle(x,          y,        size,       d);
+    filledCircle(x - size/2, y + 3,    size*3/4,   m);
+    filledCircle(x + size/2, y + 2,    size*3/4,   d);
+    filledCircle(x,          y-size/2, size*2/3,   l);
+}
+
+
+// ============================================================
+// ROCK
+// ============================================================
+
+void drawRock(int x, int y, int size)
+{
+    int dark  = nightMode ? rgb(55, 60, 58)
+                          : rgb(85, 88, 78);
+    int light = nightMode ? rgb(80, 85, 82)
+                          : rgb(135, 130, 115);
+
+    setfillstyle(SOLID_FILL, dark);
+
+    int p[] =
+    {
+        x - size,     y,
+        x - size / 2, y - size,
+        x + size / 3, y - size - 7,
+        x + size,     y,
+        x + size / 2, y + size / 4,
+        x - size / 2, y + size / 4
+    };
+    fillpoly(6, p);
+
+    setcolor(light);
+    line(x - size/2, y - size,
+         x + size/3, y - size - 7);
+    line(x + size/3, y - size - 7,
+         x + size/2, y - 3);
+}
+
+
+// ============================================================
+// FISH
+// ============================================================
+
+void drawFish(int x, int y, int color, bool right)
+{
+    int d = right ? 1 : -1;
+
+    setfillstyle(SOLID_FILL, color);
+
+    int tail[] =
+    {
+        x - d*20, y,
+        x - d*40, y - 15,
+        x - d*40, y + 15
+    };
+    fillpoly(3, tail);
+
+    fillellipse(x, y, 24, 12);
+
+    // Fin
+    int fin[] = { x - d*3, y, x, y + 14, x + d*8, y + 3 };
+    fillpoly(3, fin);
+
+    // Eye
+    filledCircle(x + d*13, y - 3, 2, BLACK);
+
+    // Bubbles
+    setcolor(rgb(180, 225, 235));
+    circle(x + d*30, y - 15, 3);
+    circle(x + d*38, y - 25, 2);
+}
+
+
+// ============================================================
+// BIRDS
+// ============================================================
+
+void drawBird(int x, int y, int size, int phase)
+{
+    setcolor(nightMode ? rgb(190,190,190) : rgb(40,40,35));
+    setlinestyle(SOLID_LINE, 0, 2);
+
+    int flap = ((waveFrame + phase) / 5) % 2;
+
+    if (flap)
+    {
+        arc(x - size, y, 350, 90,  size);
+        arc(x + size, y, 90,  190, size);
+    }
+    else
+    {
+        arc(x - size, y, 180, 350, size);
+        arc(x + size, y, 190, 360, size);
+    }
+
+    setlinestyle(SOLID_LINE, 0, 1);
+}
+
+void drawBirds()
+{
+    drawBird(birdX,        130, 12, 0);
+    drawBird(birdX + 55,   105, 9,  3);
+    drawBird(birdX + 95,   145, 8,  6);
+}
+
+
+// ============================================================
+// PERSON BATHING
+// ============================================================
+
+void drawPerson()
+{
+    int x = 680;
+    int y = 540;
+
+    int skin     = rgb(205, 145, 95);
+    int darkSkin = rgb(155, 100, 65);
+
+    // Head
+    filledCircle(x, y - 72, 12, skin);
+
+    // Hair
+    setfillstyle(SOLID_FILL, rgb(40, 28, 20));
+    fillellipse(x, y - 79, 12, 7);
+
+    // Face dot
+    filledCircle(x + 4, y - 73, 1, BLACK);
+
+    // Neck
+    setcolor(skin);
+    setlinestyle(SOLID_LINE, 0, 5);
+    line(x, y - 61, x, y - 55);
+
+    // Body
+    setlinestyle(SOLID_LINE, 0, 9);
+    line(x, y - 55, x, y - 22);
+
+    // Arms raised enjoying waterfall
+    setlinestyle(SOLID_LINE, 0, 6);
+    line(x, y - 49, x - 22, y - 35);
+    line(x - 22, y - 35, x - 32, y - 52);
+
+    line(x, y - 49, x + 20, y - 33);
+    line(x + 20, y - 33, x + 30, y - 50);
+
+    // Shorts
+    setfillstyle(SOLID_FILL, rgb(25, 55, 100));
+    bar(x - 9, y - 26, x + 9, y - 8);
+
+    // Legs
+    setcolor(darkSkin);
+    setlinestyle(SOLID_LINE, 0, 6);
+    line(x - 5, y - 8, x - 9, y + 14);
+    line(x + 5, y - 8, x + 10, y + 14);
+    setlinestyle(SOLID_LINE, 0, 1);
+
+    // Splashes
+    setcolor(rgb(215, 240, 248));
+    arc(x - 10, y + 15, 10, 170, 20);
+    arc(x + 17, y + 14, 10, 170, 20);
+}
+
+
+// ============================================================
+// FLOWERS
+// ============================================================
+
+void drawFlower(int x, int y, int color)
+{
+    setcolor(rgb(30, 110, 40));
+    line(x, y, x, y - 18);
+
+    filledCircle(x - 4, y - 20, 4, color);
+    filledCircle(x + 4, y - 20, 4, color);
+    filledCircle(x,     y - 24, 4, color);
+    filledCircle(x,     y - 17, 4, color);
+    filledCircle(x,     y - 20, 3, rgb(250, 210, 50));
+}
+
+void drawFlowers()
+{
+    drawFlower(70,   525, rgb(240, 80, 100));
+    drawFlower(120,  530, rgb(255, 190, 40));
+    drawFlower(190,  525, rgb(190, 90, 220));
+
+    drawFlower(1010, 525, rgb(240, 100, 130));
+    drawFlower(1080, 520, rgb(245, 200, 50));
+    drawFlower(1140, 530, rgb(170, 100, 230));
+}
+
+
+// ============================================================
+// RAIN
+// ============================================================
+
+void drawRain()
+{
+    setcolor(nightMode ? rgb(110, 150, 180)
+                       : rgb(180, 215, 235));
+
+    for (int i = 0; i < 160; i++)
+    {
+        int x = (i * 79 + rainFrame * 9)  % (WIDTH + 100);
+        int y = (i * 53 + rainFrame * 14) % HEIGHT;
+
+        line(x, y, x - 7, y + 15);
+    }
+}
+
+
+// ============================================================
+// CONTROLS
+// ============================================================
+
+void drawControls()
+{
+    setfillstyle(SOLID_FILL, rgb(22, 32, 40));
+    bar(15, 650, 720, 688);
+
+    setbkcolor(rgb(22, 32, 40));
+    setcolor(WHITE);
+    settextstyle(DEFAULT_FONT, HORIZ_DIR, 1);
+
+    char text[200];
+    sprintf(text,
+        "D: Day/Night   R: Rain %s   +/-: Waterfall Speed [%d]   ESC: Exit",
+        rainOn ? "ON" : "OFF", waterSpeed);
+
+    outtextxy(28, 664, text);
+}
+
+
+// ============================================================
+// COMPLETE SCENE
+// ============================================================
+
+void drawScene()
+{
+    drawSky();
+    drawSunMoon();
+    drawClouds();
+
+    drawMountains();
+    drawCliff();
+
+    drawRiver();
+    drawGrassArea();
+
+    drawWaterfall();
+
+    // Trees
+    drawTree(85,   515, 90);
+    drawTree(1120, 510, 100);
+    drawTree(275,  510, 55);
+    drawTree(930,  515, 60);
+
+    // Foreground bushes
+    drawBush(25,   525, 26);
+    drawBush(225,  528, 22);
+    drawBush(965,  522, 25);
+    drawBush(1180, 527, 30);
+
+    // Rocks
+    drawRock(410, 535, 32);
+    drawRock(770, 535, 35);
+    drawRock(340, 550, 20);
+    drawRock(855, 548, 22);
+
+    // Fish
+    drawFish(fishX1, 610, rgb(245, 145, 45), true);
+    drawFish(fishX2, 650, rgb(235, 90,  90), false);
+
+    drawPerson();
+    drawBirds();
+    drawFlowers();
+
+    if (rainOn) drawRain();
+
+    drawControls();
+}
+
+
+// ============================================================
+// UPDATE
+// ============================================================
+
+void updateAnimation()
+{
+    cloudX1 += 1;
+    if (cloudX1 > WIDTH + 150) cloudX1 = -180;
+
+    if (waveFrame % 2 == 0) cloudX2 += 1;
+    if (cloudX2 > WIDTH + 150) cloudX2 = -200;
+
+    birdX += 3;
+    if (birdX > WIDTH + 150) birdX = -150;
+
+    fishX1 += 2;
+    if (fishX1 > WIDTH + 50) fishX1 = -50;
+
+    fishX2 -= 2;
+    if (fishX2 < -50) fishX2 = WIDTH + 50;
+
+    waterfallFrame++;
+    waveFrame++;
+    rainFrame++;
+}
+
+
+// ============================================================
+// KEYBOARD
+// ============================================================
+
+bool handleKeyboard()
+{
+    if (kbhit())
+    {
+        int k = getch();
+
+        if (k == 27) return false;
+
+        if (k == 'd' || k == 'D') nightMode = !nightMode;
+        if (k == 'r' || k == 'R') rainOn    = !rainOn;
+
+        if ((k == '+' || k == '=') && waterSpeed < 8) waterSpeed++;
+        if ((k == '-' || k == '_') && waterSpeed > 1) waterSpeed--;
+    }
+    return true;
+}
+
+
+// ============================================================
+// MAIN
+// ============================================================
+
+int main()
+{
+    srand((unsigned) time(NULL));
+
+    initwindow(WIDTH, HEIGHT, "Waterfall Paradise");
+
+    bool running = true;
+
+    while (running)
+    {
+        currentPage = 1 - currentPage;
+        setactivepage(currentPage);
+        cleardevice();
+
+        drawScene();
+
+        setvisualpage(currentPage);
+
+        running = handleKeyboard();
+        updateAnimation();
+
+        delay(25);
+    }
+
+    closegraph();
+    return 0;
+}
