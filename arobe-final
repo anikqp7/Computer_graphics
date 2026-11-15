@@ -1,0 +1,1153 @@
+#include <graphics.h>
+#include <conio.h>
+#include <cmath>
+#include <cstdio>
+
+using namespace std;
+
+const int W = 1280, H = 720;
+const double PI = 3.14159265358979323846;
+const int BOOTH_Y = 325, BOOTH_W = 370, BOOTH_H = 230;
+
+double animationTime = 0, windAngle = 0, orbitAngle = 0, armTime = 0;
+double cloudX1 = 70, cloudX2 = 520, cloudX3 = 920, birdX = 100;
+double nightMix = 0, selectionPulse = 0, rocketHeight = 0;
+
+bool nightTarget = false, paused = false, rocketActive = false;
+int selected = 0, activePage = 0;
+
+// ======================= VISITORS =======================
+
+struct FairVisitor {
+    double x;
+    int direction, groundY;
+    double scale;
+    int shirtColor;
+    double phase;
+    bool hasBag;
+    int targetBooth, state, visitTimer;
+    double speed;
+};
+
+const int VISITOR_COUNT = 4;
+const int boothStopX[3] = {260, 685, 1110};
+FairVisitor visitors[VISITOR_COUNT];
+
+void initializeVisitors() {
+    visitors[0] = {-80, 1, 655, 0.90, COLOR(205,70,62),
+                   0.0, true, 0, 0, 0, 1.35};
+
+    visitors[1] = {1360, -1, 663, 0.88, COLOR(48,105,190),
+                   2.0, false, 2, 0, 0, 1.05};
+
+    visitors[2] = {440, 1, 645, 0.78, COLOR(160,75,165),
+                   4.0, true, 1, 0, 0, 0.80};
+
+    visitors[3] = {900, -1, 668, 0.95, COLOR(220,145,45),
+                   6.0, false, 1, 0, 0, 0.90};
+}
+
+// ======================= HELPERS =======================
+
+int clampValue(int v) {
+    if (v < 0) return 0;
+    if (v > 255) return 255;
+    return v;
+}
+
+int rgb(int r, int g, int b) {
+    return COLOR(clampValue(r), clampValue(g), clampValue(b));
+}
+
+int mixColor(int r1, int g1, int b1,
+             int r2, int g2, int b2, double t) {
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+
+    return rgb((int)(r1 + (r2-r1)*t),
+               (int)(g1 + (g2-g1)*t),
+               (int)(b1 + (b2-b1)*t));
+}
+
+int sceneColor(int r1, int g1, int b1,
+               int r2, int g2, int b2) {
+    return mixColor(r1, g1, b1, r2, g2, b2, nightMix);
+}
+
+void box(int x1, int y1, int x2, int y2, int c) {
+    setcolor(c);
+    setfillstyle(SOLID_FILL, c);
+    bar(x1, y1, x2, y2);
+}
+
+void filledCircle(int x, int y, int r, int c) {
+    if (r < 1) r = 1;
+    setcolor(c);
+    setfillstyle(SOLID_FILL, c);
+    fillellipse(x, y, r, r);
+}
+
+void filledEllipse(int x, int y, int rx, int ry, int c) {
+    if (rx < 1) rx = 1;
+    if (ry < 1) ry = 1;
+    setcolor(c);
+    setfillstyle(SOLID_FILL, c);
+    fillellipse(x, y, rx, ry);
+}
+
+void polygon(int p[], int n, int fill, int border) {
+    setcolor(border);
+    setfillstyle(SOLID_FILL, fill);
+    fillpoly(n, p);
+}
+
+void drawText(int x, int y, const char *s, int c, int bg) {
+    setcolor(c);
+    setbkcolor(bg);
+    outtextxy(x, y, (char*)s);
+}
+
+void centeredText(int x1, int x2, int y,
+                  const char *s, int c, int bg) {
+    setcolor(c);
+    setbkcolor(bg);
+    outtextxy((x1+x2-textwidth((char*)s))/2, y, (char*)s);
+}
+
+void thickLine(int x1, int y1, int x2, int y2, int c, int width) {
+    setcolor(c);
+    setlinestyle(SOLID_LINE, 0, width > 1 ? THICK_WIDTH : NORM_WIDTH);
+    line(x1, y1, x2, y2);
+    setlinestyle(SOLID_LINE, 0, NORM_WIDTH);
+}
+
+void outline(int x1, int y1, int x2, int y2, int c) {
+    setcolor(c);
+    rectangle(x1, y1, x2, y2);
+}
+
+// ======================= BACKGROUND =======================
+
+void drawSky() {
+    for (int y = 0; y < 285; y += 3) {
+        double t = (double)y / 285.0;
+        int c = mixColor(
+            (int)(48+105*t), (int)(125+90*t), (int)(195+40*t),
+            (int)(7+13*t), (int)(14+22*t), (int)(35+35*t),
+            nightMix
+        );
+        box(0, y, W, y+3, c);
+    }
+
+    if (nightMix > 0.15) {
+        for (int i = 0; i < 85; i++) {
+            int x = (i*173+37)%W, y = (i*71+18)%210;
+            double twinkle = 0.65 + 0.35*sin(animationTime*2+i);
+            int b = (int)(210*nightMix*twinkle);
+            if (b > 35) putpixel(x, y, rgb(b, b, b+20));
+        }
+    }
+
+    int sunY = 76 + (int)(105*nightMix);
+
+    if (nightMix < 0.95) {
+        filledCircle(1135, sunY, 50,
+                     mixColor(244,194,106,90,75,70,nightMix));
+        filledCircle(1135, sunY, 38,
+                     mixColor(255,214,105,115,87,65,nightMix));
+        filledCircle(1135, sunY, 28,
+                     mixColor(255,238,170,140,110,80,nightMix));
+    }
+
+    if (nightMix > 0.12) {
+        int moonY = 145 - (int)(75*nightMix);
+        filledCircle(1135, moonY, 29,
+                     mixColor(35,48,70,240,238,220,nightMix));
+        filledCircle(1148, moonY-8, 26,
+                     sceneColor(95,165,215,15,23,48));
+    }
+}
+
+void drawCloud(int x, int y, double s) {
+    int shadow = sceneColor(185,204,215,48,58,78);
+    int mainColor = sceneColor(243,247,248,78,88,112);
+    int highlight = sceneColor(255,255,255,95,106,130);
+
+    filledEllipse(x, y+(int)(8*s), (int)(55*s), (int)(13*s), shadow);
+    filledEllipse(x-(int)(28*s), y, (int)(24*s), (int)(13*s), mainColor);
+    filledEllipse(x, y-(int)(10*s), (int)(30*s), (int)(20*s), mainColor);
+    filledEllipse(x+(int)(30*s), y-(int)(3*s),
+                  (int)(27*s), (int)(15*s), mainColor);
+    filledEllipse(x+(int)(4*s), y+(int)(5*s),
+                  (int)(48*s), (int)(12*s), mainColor);
+    filledEllipse(x-(int)(5*s), y-(int)(17*s),
+                  (int)(13*s), (int)(4*s), highlight);
+}
+
+void drawBird(int x, int y, double s) {
+    int flap = (int)(5*sin(animationTime*5));
+    setcolor(sceneColor(45,54,62,175,180,190));
+    line(x-(int)(14*s), y-flap, x, y);
+    line(x, y, x+(int)(14*s), y-flap);
+}
+
+void drawMountains() {
+    int back[] = {
+        0,285, 0,228, 120,155, 240,225, 365,150,
+        500,230, 640,155, 785,232, 930,145,
+        1080,225, 1190,160, 1280,220, 1280,285
+    };
+
+    int front[] = {
+        0,300, 0,258, 160,205, 310,260, 470,205,
+        625,265, 790,205, 950,265, 1100,210,
+        1280,255, 1280,300
+    };
+
+    int c1 = sceneColor(110,153,163,31,42,62);
+    int c2 = sceneColor(73,126,105,28,57,57);
+
+    polygon(back, 13, c1, c1);
+    polygon(front, 11, c2, c2);
+}
+
+void drawGround() {
+    int grass = sceneColor(73,139,71,32,75,44);
+    int grassTop = sceneColor(55,116,59,26,62,38);
+    int grassDetail = sceneColor(93,158,82,47,94,51);
+
+    box(0, 285, W, 570, grass);
+    box(0, 285, W, 302, grassTop);
+
+    setcolor(grassDetail);
+    for (int i = 0; i < 120; i++) {
+        int x = (i*137+17)%W, y = 310+(i*43)%245;
+        line(x, y, x+3, y-4);
+        line(x+3, y-4, x+7, y);
+    }
+
+    int path = sceneColor(190,185,174,105,108,108);
+    int edge = sceneColor(112,108,101,63,67,70);
+    int pathLine = sceneColor(218,213,203,128,132,130);
+
+    box(0, 570, W, 680, path);
+    box(0, 570, W, 577, edge);
+    box(0, 673, W, 680, edge);
+
+    setcolor(pathLine);
+    for (int x = -300; x < 1600; x += 100)
+        line(x, 578, 640+(int)((x-640)*1.12), 672);
+
+    line(0, 604, W, 604);
+    line(0, 638, W, 638);
+
+    box(0, 680, W, H, rgb(17,23,34));
+    box(0, 680, W, 682, rgb(48,64,81));
+}
+
+// ======================= HEADER =======================
+
+void drawFlag(int x, int y, bool rightSide) {
+    int pole = sceneColor(190,190,180,110,115,120);
+    int color = rightSide ? rgb(34,145,170) : rgb(215,85,67);
+    int wave = (int)(5*sin(animationTime*3+x*0.02));
+    int d = rightSide ? -1 : 1;
+
+    thickLine(x, y, x, y+62, pole, 2);
+
+    int p[] = {
+        x,y+2, x+d*25,y+6+wave, x+d*48,y+3,
+        x+d*47,y+23, x+d*24,y+26+wave, x,y+22
+    };
+
+    polygon(p, 6, color, color);
+}
+
+void drawHeader() {
+    int navy = sceneColor(25,51,86,20,34,61);
+    int dark = sceneColor(16,35,60,10,20,39);
+    int gold = sceneColor(236,184,65,225,170,70);
+    int pillar = sceneColor(225,221,207,145,148,143);
+    int shadow = sceneColor(153,153,143,91,96,97);
+
+    box(210,160,234,300,shadow);
+    box(210,160,226,300,pillar);
+    box(1048,160,1072,300,shadow);
+    box(1048,160,1064,300,pillar);
+
+    box(257,115,1028,207,dark);
+    box(250,108,1020,199,navy);
+
+    outline(257,115,1013,192,gold);
+    outline(263,121,1007,186,gold);
+
+    settextstyle(DEFAULT_FONT,HORIZ_DIR,3);
+    centeredText(250,1020,130,"SCIENCE & TECHNOLOGY FAIR",WHITE,navy);
+
+    settextstyle(DEFAULT_FONT,HORIZ_DIR,1);
+    centeredText(250,1020,170,
+                 "INNOVATE   |   EXPLORE   |   INSPIRE",
+                 LIGHTCYAN,navy);
+
+    for (int x = 280; x <= 990; x += 30) {
+        int c = sin(animationTime*3+x*0.04) > 0
+              ? rgb(255,220,105) : rgb(110,220,235);
+        filledCircle(x,112,3,c);
+    }
+
+    drawFlag(210,110,false);
+    drawFlag(1070,110,true);
+}
+
+// ======================= BOOTHS =======================
+
+void drawBooth(int x, int y, int theme, int darkTheme,
+               const char *title) {
+    int w = BOOTH_W, h = BOOTH_H, depth = 18;
+
+    int wall = sceneColor(232,228,212,150,153,145);
+    int inner = sceneColor(211,218,208,132,143,139);
+    int sideColor = sceneColor(174,175,161,94,102,99);
+    int shadow = sceneColor(47,105,55,24,57,35);
+
+    filledEllipse(x+190,y+h+10,192,14,shadow);
+
+    int side[] = {
+        x+w,y+38, x+w+depth,y+27,
+        x+w+depth,y+h-10, x+w,y+h
+    };
+    polygon(side,4,sideColor,sideColor);
+
+    box(x,y+38,x+w,y+h,wall);
+    box(x+17,y+55,x+w-17,y+h-31,inner);
+    outline(x+17,y+55,x+w-17,y+h-31,
+            sceneColor(170,180,170,90,100,100));
+
+    box(x+18,y+55,x+w-18,y+64,
+        sceneColor(181,188,177,100,108,105));
+
+    int roofSide[] = {
+        x+w-25,y-18, x+w-5,y-28,
+        x+w+33,y+25, x+w+15,y+35
+    };
+    int roof[] = {
+        x-15,y+35, x+25,y-18,
+        x+w-25,y-18, x+w+15,y+35
+    };
+
+    polygon(roofSide,4,darkTheme,darkTheme);
+    polygon(roof,4,theme,darkTheme);
+
+    int stripe1[] = {
+        x+75,y+35, x+100,y-18, x+142,y-18, x+127,y+35
+    };
+    int stripe2[] = {
+        x+240,y+35, x+225,y-18, x+267,y-18, x+292,y+35
+    };
+
+    int stripeColor = sceneColor(242,241,228,160,164,158);
+    polygon(stripe1,4,stripeColor,stripeColor);
+    polygon(stripe2,4,stripeColor,stripeColor);
+
+    box(x+39,y+16,x+w-31,y+50,darkTheme);
+    box(x+35,y+12,x+w-35,y+46,theme);
+    outline(x+40,y+17,x+w-40,y+41,WHITE);
+
+    settextstyle(DEFAULT_FONT,HORIZ_DIR,2);
+    centeredText(x+40,x+w-40,y+22,title,WHITE,theme);
+    settextstyle(DEFAULT_FONT,HORIZ_DIR,1);
+
+    int pillarDark = sceneColor(183,184,172,100,108,105);
+    int pillarLight = sceneColor(225,224,212,152,155,148);
+
+    box(x+7,y+38,x+19,y+h,pillarDark);
+    box(x+7,y+38,x+12,y+h,pillarLight);
+    box(x+w-19,y+38,x+w-7,y+h,pillarDark);
+    box(x+w-19,y+38,x+w-14,y+h,pillarLight);
+
+    int counter[] = {
+        x+20,y+h-52, x+w-20,y+h-52,
+        x+w-10,y+h-43, x+30,y+h-43
+    };
+
+    polygon(counter,4,
+            sceneColor(184,136,87,115,91,70),
+            sceneColor(120,80,50,70,56,46));
+
+    box(x+30,y+h-43,x+w-10,y+h-25,
+        sceneColor(115,76,48,73,58,46));
+    box(x+30,y+h-43,x+w-10,y+h-39,
+        sceneColor(150,100,60,92,70,50));
+
+    if (nightMix > 0.15) {
+        int glow = mixColor(132,143,139,185,159,93,nightMix);
+        int bulb = mixColor(160,165,155,255,224,135,nightMix);
+
+        filledEllipse(x+52,y+67,15,10,glow);
+        filledEllipse(x+w-52,y+67,15,10,glow);
+        filledCircle(x+52,y+62,5,bulb);
+        filledCircle(x+w-52,y+62,5,bulb);
+    }
+}
+
+// ======================= ENERGY =======================
+
+void drawTurbine(int x, int y) {
+    int tower[] = {
+        x-5,y+4, x+5,y+4, x+13,y+110, x-13,y+110
+    };
+
+    polygon(tower,4,
+            sceneColor(220,225,222,150,158,158),
+            sceneColor(130,140,140,85,95,98));
+
+    setcolor(sceneColor(245,245,240,180,185,180));
+    line(x-3,y+12,x-8,y+103);
+
+    for (int i = 0; i < 3; i++) {
+        double a = (windAngle+i*120.0)*PI/180.0;
+
+        int blade[] = {
+            x+(int)(7*cos(a-0.18)), y+(int)(7*sin(a-0.18)),
+            x+(int)(64*cos(a)),     y+(int)(64*sin(a)),
+            x+(int)(15*cos(a+0.18)),y+(int)(15*sin(a+0.18))
+        };
+
+        polygon(blade,3,
+                sceneColor(245,247,245,175,183,183),
+                sceneColor(165,175,175,110,120,120));
+    }
+
+    filledCircle(x,y,10,rgb(150,155,150));
+    filledCircle(x-2,y-2,7,rgb(250,205,70));
+}
+
+void drawSolarPanel(int x, int y) {
+    int side[] = {
+        x+10,y+63, x+110,y+58, x+110,y+65, x+10,y+70
+    };
+    int panel[] = {
+        x,y+5, x+100,y, x+110,y+58, x+10,y+63
+    };
+
+    polygon(side,4,rgb(24,35,45),rgb(24,35,45));
+    polygon(panel,4,rgb(22,62,112),rgb(125,165,185));
+
+    setcolor(rgb(77,140,188));
+    for (int i = 1; i < 4; i++)
+        line(x+i*25,y+4,x+10+i*25,y+60);
+
+    line(x+3,y+24,x+104,y+19);
+    line(x+7,y+43,x+107,y+38);
+
+    setcolor(rgb(100,110,110));
+    line(x+57,y+68,x+57,y+80);
+    line(x+38,y+80,x+78,y+80);
+
+    setcolor(rgb(155,200,220));
+    line(x+8,y+9,x+35,y+8);
+}
+
+void drawEnergyStall() {
+    int x = 30, y = BOOTH_Y;
+    int theme = sceneColor(33,120,74,24,78,53);
+    int dark = sceneColor(22,78,49,15,50,34);
+
+    drawBooth(x,y,theme,dark,"GREEN ENERGY");
+    drawTurbine(x+90,y+105);
+    drawSolarPanel(x+195,y+91);
+
+    int energy = (int)(80-48*nightMix+7*sin(animationTime*1.5));
+    if (energy < 0) energy = 0;
+    if (energy > 100) energy = 100;
+
+    box(x+210,y+176,x+330,y+194,rgb(35,43,40));
+    box(x+213,y+179,x+213+energy,y+191,
+        energy > 65 ? LIGHTGREEN : YELLOW);
+
+    char label[40];
+    sprintf(label,"POWER %d%%",energy);
+
+    drawText(x+220,y+201,label,GREEN,
+             sceneColor(211,218,208,132,143,139));
+}
+
+// ======================= ROBOTICS =======================
+
+void drawRobot(int x, int y) {
+    box(x-12,y+37,x-6,y+58,rgb(80,85,90));
+    box(x+6,y+37,x+12,y+58,rgb(80,85,90));
+
+    int side[] = {
+        x+23,y, x+30,y-5, x+25,y+34, x+18,y+40
+    };
+    int body[] = {
+        x-23,y, x+23,y, x+18,y+40, x-18,y+40
+    };
+
+    polygon(side,4,rgb(125,140,145),rgb(90,100,105));
+    polygon(body,4,sceneColor(205,215,215,145,155,158),
+            rgb(100,110,115));
+
+    box(x-13,y+10,x+13,y+27,rgb(20,45,55));
+
+    int blink = sin(animationTime*5)>0 ? LIGHTGREEN : GREEN;
+    filledCircle(x-6,y+18,2,blink);
+    filledCircle(x,y+18,2,YELLOW);
+    filledCircle(x+6,y+18,2,LIGHTRED);
+
+    box(x-18,y-36,x+25,y-7,rgb(125,140,145));
+    box(x-20,y-38,x+20,y-8,rgb(205,215,215));
+    box(x-14,y-31,x+14,y-16,rgb(25,45,55));
+
+    int eye = sin(animationTime*2.5)>-0.85
+            ? LIGHTCYAN : rgb(35,95,105);
+
+    filledCircle(x-7,y-24,3,eye);
+    filledCircle(x+7,y-24,3,eye);
+
+    setcolor(DARKGRAY);
+    line(x,y-38,x,y-49);
+    filledCircle(x,y-51,3,sin(animationTime*4)>0 ? LIGHTRED : RED);
+}
+
+void drawRobotArm(int x, int y) {
+    double a1 = (60+18*sin(armTime))*PI/180.0;
+    double a2 = (-65+25*sin(armTime*1.3))*PI/180.0;
+
+    int ex = x+(int)(54*cos(a1)), ey = y-(int)(54*sin(a1));
+    int hx = ex+(int)(46*cos(a1+a2)), hy = ey-(int)(46*sin(a1+a2));
+
+    box(x-30,y,x+30,y+14,rgb(65,70,73));
+    box(x-25,y-5,x+25,y+3,rgb(115,120,122));
+
+    thickLine(x,y,ex,ey,rgb(90,95,100),3);
+    thickLine(ex,ey,hx,hy,rgb(90,95,100),3);
+
+    setcolor(rgb(190,195,195));
+    line(x-2,y,ex-2,ey);
+    line(ex-2,ey,hx-2,hy);
+
+    filledCircle(x,y,12,rgb(225,165,45));
+    filledCircle(ex,ey,8,rgb(235,150,35));
+    filledCircle(hx,hy,6,rgb(235,150,35));
+
+    int grip = 7+(int)(3*sin(armTime*2));
+    thickLine(hx,hy,hx-grip,hy+12,DARKGRAY,2);
+    thickLine(hx,hy,hx+grip,hy+12,DARKGRAY,2);
+
+    box(x+76,y-20,x+103,y,rgb(165,105,58));
+    outline(x+76,y-20,x+103,y,rgb(110,70,40));
+}
+
+void drawRoboticsStall() {
+    int x = 455, y = BOOTH_Y;
+
+    drawBooth(x,y,
+              sceneColor(44,82,145,31,57,102),
+              sceneColor(27,52,97,18,34,64),
+              "ROBOTICS LAB");
+
+    drawRobot(x+78,y+125);
+    drawRobotArm(x+210,y+185);
+
+    drawText(x+180,y+201,"SMART AUTOMATION",BLUE,
+             sceneColor(211,218,208,132,143,139));
+}
+
+// ======================= SPACE =======================
+
+void drawSolarSystem(int x, int y) {
+    setcolor(rgb(85,98,130));
+    ellipse(x,y,0,360,36,17);
+    ellipse(x,y,0,360,61,29);
+    ellipse(x,y,0,360,88,42);
+
+    filledCircle(x,y,16,rgb(205,95,20));
+    filledCircle(x-2,y-2,12,rgb(245,165,30));
+    filledCircle(x-4,y-4,7,YELLOW);
+
+    double a = orbitAngle*PI/180.0;
+
+    int p1x = x+(int)(36*cos(a*1.8));
+    int p1y = y+(int)(17*sin(a*1.8));
+    filledCircle(p1x,p1y,4,LIGHTGRAY);
+
+    int ex = x+(int)(61*cos(a)), ey = y+(int)(29*sin(a));
+    filledCircle(ex,ey,7,rgb(25,75,145));
+    filledCircle(ex-2,ey-2,5,rgb(45,125,215));
+    filledCircle(ex-3,ey-3,2,LIGHTGREEN);
+
+    int sx = x+(int)(88*cos(a*0.55));
+    int sy = y+(int)(42*sin(a*0.55));
+
+    filledCircle(sx,sy,8,rgb(190,135,75));
+    filledCircle(sx-2,sy-2,5,rgb(230,185,110));
+
+    setcolor(rgb(230,205,145));
+    ellipse(sx,sy,0,360,17,5);
+}
+
+void drawRocket(int x, int baseY) {
+    int y = baseY-(int)rocketHeight;
+
+    if (rocketActive) {
+        int len = 22+(int)(5*sin(animationTime*15));
+        int flame[] = {x-7,y, x,y+len, x+7,y};
+        int inner[] = {x-3,y, x,y+len-8, x+3,y};
+
+        polygon(flame,3,rgb(255,145,20),YELLOW);
+        polygon(inner,3,YELLOW,YELLOW);
+    }
+
+    box(x-9,y-44,x+9,y,rgb(155,170,175));
+    box(x-9,y-44,x+4,y,rgb(235,238,235));
+
+    int nose[] = {x-9,y-44, x,y-64, x+9,y-44};
+    int leftFin[] = {x-9,y-15, x-17,y, x-9,y-3};
+    int rightFin[] = {x+9,y-15, x+17,y, x+9,y-3};
+
+    polygon(nose,3,rgb(235,237,232),rgb(150,155,155));
+    polygon(leftFin,3,rgb(185,50,48),rgb(125,35,35));
+    polygon(rightFin,3,rgb(185,50,48),rgb(125,35,35));
+
+    box(x-9,y-18,x+9,y-11,rgb(200,55,50));
+    filledCircle(x,y-34,6,rgb(65,85,95));
+    filledCircle(x-1,y-35,4,LIGHTCYAN);
+}
+
+void drawSpaceStall() {
+    int x = 880, y = BOOTH_Y;
+
+    drawBooth(x,y,
+              sceneColor(54,52,112,38,38,83),
+              sceneColor(32,30,75,20,20,50),
+              "SPACE EXPLORER");
+
+    int bg = rgb(18,24,48);
+    box(x+20,y+56,x+350,y+178,bg);
+    outline(x+20,y+56,x+350,y+178,rgb(100,112,145));
+
+    for (int i = 0; i < 35; i++) {
+        int sx = x+27+(i*53)%315, sy = y+62+(i*31)%105;
+        putpixel(sx,sy,sin(animationTime*2+i)>0 ? WHITE : LIGHTGRAY);
+    }
+
+    drawSolarSystem(x+145,y+118);
+    drawRocket(x+300,y+171);
+
+    drawText(x+270,y+201,"R: LAUNCH",LIGHTCYAN,
+             sceneColor(211,218,208,132,143,139));
+}
+
+// ======================= PEOPLE =======================
+
+void drawPerson(int x, int groundY, double s, int shirt,
+                double phase, bool bag, bool walking, bool right) {
+    int skin = sceneColor(222,175,135,166,135,115);
+    int pants = sceneColor(42,52,70,30,37,53);
+    int hair = rgb(44,31,25);
+
+    int bob = walking ? (int)(1.5*sin(animationTime*5+phase)) : 0;
+    int swing = walking ? (int)(7*s*sin(animationTime*7+phase)) : 0;
+    int y = groundY+bob;
+
+    filledEllipse(x,groundY+2,(int)(16*s),(int)(4*s),
+                  sceneColor(145,140,129,75,78,77));
+
+    if (bag)
+        box(x-(int)(15*s),y-(int)(48*s),
+            x-(int)(5*s),y-(int)(29*s),rgb(55,75,105));
+
+    thickLine(x-(int)(5*s),y-(int)(25*s),
+              x-(int)(5*s)+swing,y-(int)(3*s),pants,3);
+
+    thickLine(x+(int)(5*s),y-(int)(25*s),
+              x+(int)(5*s)-swing,y-(int)(3*s),pants,3);
+
+    thickLine(x-(int)(5*s)+swing,y-(int)(3*s),
+              x-(int)(12*s)+swing,y,rgb(28,30,33),2);
+
+    thickLine(x+(int)(5*s)-swing,y-(int)(3*s),
+              x+(int)(12*s)-swing,y,rgb(28,30,33),2);
+
+    int body[] = {
+        x-(int)(11*s),y-(int)(52*s),
+        x+(int)(11*s),y-(int)(52*s),
+        x+(int)(8*s), y-(int)(27*s),
+        x-(int)(8*s), y-(int)(27*s)
+    };
+    polygon(body,4,shirt,shirt);
+
+    if (walking) {
+        thickLine(x-(int)(10*s),y-(int)(46*s),
+                  x-(int)(15*s)-swing/2,y-(int)(28*s),skin,2);
+        thickLine(x+(int)(10*s),y-(int)(46*s),
+                  x+(int)(15*s)+swing/2,y-(int)(28*s),skin,2);
+    } else {
+        int gesture = (int)(2*sin(animationTime*1.5+phase));
+
+        if (right) {
+            thickLine(x+(int)(10*s),y-(int)(46*s),
+                      x+(int)(25*s),y-(int)(38*s)+gesture,skin,2);
+            thickLine(x-(int)(10*s),y-(int)(46*s),
+                      x-(int)(12*s),y-(int)(29*s),skin,2);
+        } else {
+            thickLine(x-(int)(10*s),y-(int)(46*s),
+                      x-(int)(25*s),y-(int)(38*s)+gesture,skin,2);
+            thickLine(x+(int)(10*s),y-(int)(46*s),
+                      x+(int)(12*s),y-(int)(29*s),skin,2);
+        }
+    }
+
+    box(x-(int)(3*s),y-(int)(59*s),
+        x+(int)(3*s),y-(int)(50*s),skin);
+
+    int headY = y-(int)(66*s);
+    filledEllipse(x,headY,(int)(9*s),(int)(11*s),skin);
+
+    setcolor(hair);
+    setfillstyle(SOLID_FILL,hair);
+    pieslice(x,headY-(int)(3*s),0,180,(int)(9*s));
+
+    filledCircle(x+(right ? 3 : -3),headY-1,1,rgb(35,28,24));
+}
+
+void drawStallStudents() {
+    drawPerson(155,570,1.0,rgb(195,70,60),0,false,false,false);
+    drawPerson(345,570,1.0,rgb(45,95,175),1,false,false,false);
+    drawPerson(555,570,1.0,rgb(220,140,35),2,false,false,true);
+    drawPerson(775,570,1.0,rgb(110,65,160),3,false,false,false);
+    drawPerson(970,570,1.0,rgb(35,130,100),4,false,false,true);
+    drawPerson(1190,570,1.0,rgb(190,65,95),5,false,false,false);
+}
+
+// ======================= VISITOR INTERACTION =======================
+
+const char* getVisitorMessage(int booth, int index) {
+    if (booth == 0)
+        return index%2 == 0 ? "How does solar power work?"
+                            : "Clean energy is amazing!";
+
+    if (booth == 1)
+        return index%2 == 0 ? "Look at that robot arm!"
+                            : "Can the robot pick it up?";
+
+    return index%2 == 0 ? "Let's explore the planets!"
+                        : "Wow! A rocket launch!";
+}
+
+void drawSpeechBubble(int vx, int vy, const char *message) {
+    settextstyle(DEFAULT_FONT,HORIZ_DIR,1);
+
+    int width = textwidth((char*)message)+20, height = 24;
+    int x = vx-width/2, y = vy-112;
+
+    if (x < 5) x = 5;
+    if (x+width > W-5) x = W-width-5;
+
+    int bg = rgb(248,248,239), border = rgb(75,80,85);
+
+    box(x+3,y+3,x+width+3,y+height+3,rgb(80,85,82));
+    box(x,y,x+width,y+height,bg);
+    outline(x,y,x+width,y+height,border);
+
+    int pointer[] = {
+        vx-5,y+height, vx+5,y+height, vx,y+height+8
+    };
+    polygon(pointer,3,bg,border);
+    drawText(x+10,y+8,message,rgb(35,42,48),bg);
+}
+
+void drawVisitors() {
+    // Draw visitors from back to front based on groundY.
+    for (int pass = 0; pass < VISITOR_COUNT; pass++) {
+        int chosen = -1;
+
+        for (int i = 0; i < VISITOR_COUNT; i++) {
+            int rank = 0;
+
+            for (int j = 0; j < VISITOR_COUNT; j++) {
+                if (visitors[j].groundY < visitors[i].groundY ||
+                    (visitors[j].groundY == visitors[i].groundY && j < i))
+                    rank++;
+            }
+
+            if (rank == pass) {
+                chosen = i;
+                break;
+            }
+        }
+
+        if (chosen >= 0) {
+            FairVisitor &v = visitors[chosen];
+            drawPerson((int)v.x,v.groundY,v.scale,v.shirtColor,
+                       v.phase,v.hasBag,v.state != 1,v.direction == 1);
+        }
+    }
+
+    // At most one speech bubble per booth.
+    for (int booth = 0; booth < 3; booth++) {
+        for (int i = 0; i < VISITOR_COUNT; i++) {
+            FairVisitor &v = visitors[i];
+
+            if (v.targetBooth == booth && v.state == 1 &&
+                v.visitTimer > 20 && v.visitTimer < 150) {
+                drawSpeechBubble((int)v.x,v.groundY,
+                                 getVisitorMessage(v.targetBooth,i));
+                break;
+            }
+        }
+    }
+}
+
+void updateVisitors() {
+    for (int i = 0; i < VISITOR_COUNT; i++) {
+        FairVisitor &v = visitors[i];
+
+        if (v.state == 0) {
+            v.x += v.speed*v.direction;
+            int target = boothStopX[v.targetBooth];
+
+            if ((v.direction == 1 && v.x >= target) ||
+                (v.direction == -1 && v.x <= target)) {
+                v.x = target;
+                v.state = 1;
+                v.visitTimer = 0;
+            }
+        }
+        else if (v.state == 1) {
+            v.visitTimer++;
+
+            if (v.visitTimer >= 165+i*20) {
+                v.state = 2;
+                v.visitTimer = 0;
+            }
+        }
+        else {
+            v.x += v.speed*v.direction;
+
+            if ((v.direction == 1 && v.x > W+80) ||
+                (v.direction == -1 && v.x < -80)) {
+                v.x = v.direction == 1 ? -80 : W+80;
+                v.targetBooth = (v.targetBooth+1)%3;
+                v.state = 0;
+                v.visitTimer = 0;
+            }
+        }
+    }
+}
+
+// ======================= DECORATIONS =======================
+
+void drawTree(int x, int y) {
+    int trunk = sceneColor(110,73,43,72,51,34);
+    int dark = sceneColor(34,105,48,22,65,36);
+    int leaf = sceneColor(45,130,57,30,82,43);
+    int light = sceneColor(72,153,71,43,98,51);
+
+    filledEllipse(x,y+3,28,7,sceneColor(51,105,54,25,60,37));
+    box(x-6,y-50,x+6,y,trunk);
+
+    filledCircle(x,y-70,25,dark);
+    filledCircle(x-19,y-55,19,leaf);
+    filledCircle(x+19,y-56,20,dark);
+    filledCircle(x-5,y-75,16,light);
+}
+
+void drawLamp(int x) {
+    filledEllipse(x+8,671,18,3,
+                  sceneColor(145,140,128,70,72,70));
+
+    box(x-3,598,x+3,670,rgb(55,60,62));
+    box(x-1,598,x,670,rgb(120,125,125));
+    thickLine(x,598,x+14,598,rgb(55,60,62),2);
+
+    if (nightMix > 0.15)
+        filledEllipse(x+16,598,15,12,
+                      mixColor(105,108,108,142,135,90,nightMix));
+
+    filledCircle(x+16,598,7,
+                 mixColor(205,210,205,255,224,135,nightMix));
+}
+
+void drawDecorations() {
+    drawTree(18,565);
+    drawTree(1260,565);
+    drawLamp(420);
+    drawLamp(845);
+}
+
+// ======================= UI =======================
+
+void drawSelection() {
+    if (selected == 0) return;
+
+    int x1 = 0, x2 = 0;
+
+    if (selected == 1) { x1 = 20;  x2 = 410; }
+    if (selected == 2) { x1 = 445; x2 = 835; }
+    if (selected == 3) { x1 = 870; x2 = 1260; }
+
+    int b = 190+(int)(55*selectionPulse);
+
+    setcolor(rgb(b,b-20,55));
+    setlinestyle(SOLID_LINE,0,THICK_WIDTH);
+    rectangle(x1,295,x2,565);
+    setlinestyle(SOLID_LINE,0,NORM_WIDTH);
+}
+
+void drawInfoPanel() {
+    if (selected == 0) return;
+
+    const char *title = "";
+    const char *description = "";
+
+    if (selected == 1) {
+        title = "GREEN ENERGY";
+        description = "Wind and solar power for a cleaner future";
+    } else if (selected == 2) {
+        title = "ROBOTICS LAB";
+        description = "Automation, intelligent machines and innovation";
+    } else if (selected == 3) {
+        title = "SPACE EXPLORER";
+        description = "Explore the solar system - press R to launch";
+    }
+
+    int x = 435, y = 584, w = 410, h = 48;
+    int bg = rgb(25,38,53);
+
+    box(x+4,y+4,x+w+4,y+h+4,rgb(65,70,70));
+    box(x,y,x+w,y+h,bg);
+    outline(x,y,x+w,y+h,rgb(90,150,165));
+
+    settextstyle(DEFAULT_FONT,HORIZ_DIR,1);
+    centeredText(x,x+w,y+7,title,LIGHTCYAN,bg);
+    centeredText(x,x+w,y+27,description,WHITE,bg);
+}
+
+void drawUI() {
+    const char *labels[] = {
+        "1: ENERGY",
+        "2: ROBOTICS",
+        "3: SPACE",
+        "0: CLEAR",
+        "R: LAUNCH",
+        "N: DAY/NIGHT",
+        "SPACE: PAUSE",
+        "ESC: EXIT"
+    };
+
+    settextstyle(DEFAULT_FONT, HORIZ_DIR, 1);
+
+    for (int i = 0; i < 8; i++) {
+        int x = 8 + i * 158;
+        int y = 686;
+        int buttonColor = rgb(42, 60, 78);
+        int borderColor = rgb(104, 145, 160);
+
+        // Selected booth button highlight
+        if (i < 3 && selected == i + 1) {
+            buttonColor = rgb(46, 100, 100);
+            borderColor = YELLOW;
+        }
+
+        // Pause button highlight
+        if (i == 6 && paused) {
+            buttonColor = rgb(125, 90, 35);
+            borderColor = YELLOW;
+        }
+
+        // Exit button
+        if (i == 7)
+            buttonColor = rgb(112, 48, 48);
+
+        box(x, y, x + 149, y + 27, buttonColor);
+        outline(x, y, x + 149, y + 27, borderColor);
+
+        const char *label = labels[i];
+
+        if (i == 6 && paused)
+            label = "SPACE: RESUME";
+
+        centeredText(
+            x, x + 149, y + 9,
+            label, WHITE, buttonColor
+        );
+    }
+}
+
+// ======================= SCENE =======================
+
+void drawScene() {
+    drawSky();
+
+    drawCloud((int)cloudX1,72,0.82);
+    drawCloud((int)cloudX2,105,0.68);
+    drawCloud((int)cloudX3,55,0.58);
+
+    drawBird((int)birdX,85,0.8);
+    drawBird((int)birdX+105,115,0.6);
+    drawBird((int)birdX+155,96,0.5);
+
+    drawMountains();
+    drawGround();
+    drawHeader();
+
+    drawEnergyStall();
+    drawRoboticsStall();
+    drawSpaceStall();
+
+    drawDecorations();
+    drawSelection();
+    drawStallStudents();
+    drawVisitors();
+
+    drawInfoPanel();
+    drawUI();
+}
+
+// ======================= UPDATE AND INPUT =======================
+
+void updateScene() {
+    if (paused) return;
+
+    animationTime += 0.025;
+
+    windAngle += 3.5;
+    if (windAngle >= 360) windAngle -= 360;
+
+    orbitAngle += 1.2;
+    if (orbitAngle >= 7200) orbitAngle -= 7200;
+
+    armTime += 0.035;
+    selectionPulse = (sin(animationTime*4)+1)/2;
+
+    double target = nightTarget ? 1.0 : 0.0;
+
+    if (nightMix < target) {
+        nightMix += 0.008;
+        if (nightMix > target) nightMix = target;
+    } else if (nightMix > target) {
+        nightMix -= 0.008;
+        if (nightMix < target) nightMix = target;
+    }
+
+    cloudX1 += 0.70;
+    cloudX2 += 0.45;
+    cloudX3 += 0.30;
+
+    if (cloudX1 > W+100) cloudX1 = -120;
+    if (cloudX2 > W+100) cloudX2 = -120;
+    if (cloudX3 > W+100) cloudX3 = -120;
+
+    birdX += 1.5;
+    if (birdX > W+180) birdX = -180;
+
+    updateVisitors();
+
+    if (rocketActive) {
+        rocketHeight += 3.5;
+
+        if (rocketHeight > 150) {
+            rocketHeight = 0;
+            rocketActive = false;
+        }
+    }
+}
+
+bool handleInput() {
+    // Mouse button click
+    if (ismouseclick(WM_LBUTTONDOWN)) {
+        int mx, my;
+        getmouseclick(WM_LBUTTONDOWN, mx, my);
+
+        if (my >= 686 && my <= 713) {
+            for (int i = 0; i < 8; i++) {
+                int x = 8 + i * 158;
+
+                if (mx >= x && mx <= x + 149) {
+                    if (i >= 0 && i <= 2) {
+                        selected = i + 1;
+                    }
+                    else if (i == 3) {
+                        selected = 0;
+                    }
+                    else if (i == 4) {
+                        if (!rocketActive) {
+                            rocketActive = true;
+                            rocketHeight = 0;
+                        }
+                    }
+                    else if (i == 5) {
+                        nightTarget = !nightTarget;
+                    }
+                    else if (i == 6) {
+                        paused = !paused;
+                    }
+                    else if (i == 7) {
+                        return false;
+                    }
+
+                    break;
+                }
+            }
+        }
+    }
+
+    // Keyboard controls
+    if (!kbhit())
+        return true;
+
+    int key = getch();
+
+    if (key == 0 || key == 224) {
+        getch();
+        return true;
+    }
+
+    if (key == 27)
+        return false;
+
+    if (key >= '0' && key <= '3') {
+        selected = key - '0';
+    }
+    else if (key == 'n' || key == 'N') {
+        nightTarget = !nightTarget;
+    }
+    else if (key == ' ') {
+        paused = !paused;
+    }
+    else if ((key == 'r' || key == 'R') && !rocketActive) {
+        rocketActive = true;
+        rocketHeight = 0;
+    }
+
+    return true;
+}
+
+// ======================= MAIN =======================
+
+int main() {
+    initwindow(W,H,"Interactive Science and Technology Fair");
+    initializeVisitors();
+
+    bool running = true;
+
+    while (running) {
+        setactivepage(activePage);
+        cleardevice();
+
+        drawScene();
+
+        setvisualpage(activePage);
+        activePage = 1-activePage;
+
+        updateScene();
+        running = handleInput();
+        delay(16);
+    }
+
+    closegraph();
+    return 0;
+}
