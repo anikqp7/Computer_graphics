@@ -1,0 +1,755 @@
+#include <graphics.h>
+#include <conio.h>
+#include <windows.h>
+#include <stdio.h>
+#include <math.h>
+
+// ============================================================
+// SMART VILLAGE POWER SAVER
+// WinBGIm Interactive Animation
+// ============================================================
+
+const int WIDTH = 1200;
+const int HEIGHT = 700;
+
+bool nightMode = true;
+bool smartMode = true;
+bool autoLife = true;
+bool paused = false;
+bool showHelp = true;
+
+int frameNo = 0;
+int carX = -100;
+int animationSpeed = 2;
+int currentPage = 0;
+
+// Eight village buildings
+const int BUILDINGS = 8;
+
+int bx[BUILDINGS] = {55, 195, 340, 485, 665, 810, 945, 1065};
+int bw[BUILDINGS] = {115, 115, 115, 115, 115, 105, 100, 85};
+int bh[BUILDINGS] = {100, 145, 215, 255, 285, 205, 105, 230};
+
+bool buildingOn[BUILDINGS] =
+{
+    true, true, true, true,
+    true, true, true, true
+};
+
+
+// ============================================================
+// HELPERS
+// ============================================================
+
+int rgb(int r, int g, int b)
+{
+    return COLOR(r, g, b);
+}
+
+void box(int x1, int y1, int x2, int y2, int color)
+{
+    setfillstyle(SOLID_FILL, color);
+    bar(x1, y1, x2, y2);
+}
+
+void dot(int x, int y, int radius, int color)
+{
+    setcolor(color);
+    setfillstyle(SOLID_FILL, color);
+    fillellipse(x, y, radius, radius);
+}
+
+void outline(int x1, int y1, int x2, int y2, int color)
+{
+    setcolor(color);
+    rectangle(x1, y1, x2, y2);
+}
+
+void textAt(int x, int y, const char *text, int color)
+{
+    setcolor(color);
+    outtextxy(x, y, const_cast<char *>(text));
+}
+
+void filledPoly(int count, int points[], int color)
+{
+    setcolor(color);
+    setfillstyle(SOLID_FILL, color);
+    fillpoly(count, points);
+}
+
+
+// ============================================================
+// BACKGROUND
+// ============================================================
+
+void drawBackground()
+{
+    int topR, topG, topB;
+    int bottomR, bottomG, bottomB;
+
+    if (nightMode)
+    {
+        topR = 5; topG = 12; topB = 30;
+        bottomR = 12; bottomG = 30; bottomB = 58;
+    }
+    else
+    {
+        topR = 35; topG = 100; topB = 150;
+        bottomR = 135; bottomG = 195; bottomB = 210;
+    }
+
+    for (int y = 0; y < HEIGHT; y += 5)
+    {
+        int r = topR + (bottomR - topR) * y / HEIGHT;
+        int g = topG + (bottomG - topG) * y / HEIGHT;
+        int b = topB + (bottomB - topB) * y / HEIGHT;
+
+        box(0, y, WIDTH, y + 5, rgb(r, g, b));
+    }
+
+    if (nightMode)
+    {
+        for (int i = 0; i < 65; i++)
+        {
+            int x = 25 + (i * 137) % 1150;
+            int y = 85 + (i * 83) % 345;
+            int radius = ((frameNo / 12 + i) % 9 == 0) ? 2 : 1;
+
+            dot(x, y, radius, rgb(205, 225, 240));
+        }
+    }
+    else
+    {
+        dot(1110, 95, 34, rgb(255, 220, 110));
+        dot(1110, 95, 26, rgb(255, 240, 170));
+    }
+}
+
+
+// ============================================================
+// TOP HEADER
+// ============================================================
+
+void drawHeader()
+{
+    box(15, 12, 1185, 59, rgb(10, 25, 35));
+    outline(15, 12, 1185, 59, rgb(45, 130, 145));
+
+    settextstyle(DEFAULT_FONT, HORIZ_DIR, 2);
+    textAt(30, 27, "SMART VILLAGE DIGITAL OS",
+           rgb(190, 255, 245));
+
+    settextstyle(DEFAULT_FONT, HORIZ_DIR, 1);
+
+    char status[100];
+
+    sprintf(status, "%s MODE",
+            nightMode ? "NIGHT" : "DAY");
+
+    textAt(550, 31, status, rgb(235, 245, 245));
+
+    sprintf(status, "MODE: %s   AUTO-LIFE: %s",
+            smartMode ? "SMART" : "NORMAL",
+            autoLife ? "ON" : "OFF");
+
+    textAt(835, 31, status, rgb(150, 245, 210));
+
+    setcolor(rgb(40, 220, 190));
+    line(15, 65, 1185, 65);
+}
+
+
+// ============================================================
+// BUILDING WINDOW STATE
+// ============================================================
+
+bool windowLit(int building, int row, int col)
+{
+    if (!buildingOn[building])
+        return false;
+
+    if (!nightMode)
+        return false;
+
+    if (!smartMode)
+        return true;
+
+    // In smart mode, only selected rooms use lighting.
+    int period = autoLife ? frameNo / 100 : 0;
+
+    return ((building * 7 + row * 3 + col * 5 + period) % 5 == 0);
+}
+
+int countLitWindows()
+{
+    int count = 0;
+
+    for (int i = 0; i < BUILDINGS; i++)
+    {
+        int rows = (bh[i] - 45) / 35;
+
+        if (rows < 1)
+            rows = 1;
+
+        int cols = (bw[i] >= 100) ? 3 : 2;
+
+        for (int row = 0; row < rows; row++)
+        {
+            for (int col = 0; col < cols; col++)
+            {
+                if (windowLit(i, row, col))
+                    count++;
+            }
+        }
+    }
+
+    return count;
+}
+
+
+// ============================================================
+// ENERGY CONNECTIONS
+// ============================================================
+
+void drawEnergyConnections()
+{
+    int hubX = 600;
+    int hubY = 300;
+
+    for (int i = 0; i < BUILDINGS; i++)
+    {
+        if (!buildingOn[i])
+            continue;
+
+        int targetX = bx[i] + bw[i] / 2;
+        int targetY = 570 - bh[i] - 14;
+
+        // Quadratic curve from central hub to building.
+        int controlX = (hubX + targetX) / 2;
+        int controlY = 205;
+
+        int prevX = hubX;
+        int prevY = hubY;
+
+        setcolor(nightMode ? rgb(35, 115, 130)
+                           : rgb(40, 145, 145));
+
+        for (int step = 1; step <= 40; step++)
+        {
+            double t = step / 40.0;
+            double one = 1.0 - t;
+
+            int px = (int)(one * one * hubX
+                     + 2 * one * t * controlX
+                     + t * t * targetX);
+
+            int py = (int)(one * one * hubY
+                     + 2 * one * t * controlY
+                     + t * t * targetY);
+
+            line(prevX, prevY, px, py);
+
+            prevX = px;
+            prevY = py;
+        }
+
+        // Moving energy particle.
+        double t = ((frameNo + i * 13) % 100) / 100.0;
+        double one = 1.0 - t;
+
+        int px = (int)(one * one * hubX
+                 + 2 * one * t * controlX
+                 + t * t * targetX);
+
+        int py = (int)(one * one * hubY
+                 + 2 * one * t * controlY
+                 + t * t * targetY);
+
+        dot(px, py, 5, rgb(35, 110, 115));
+        dot(px, py, 2, rgb(145, 255, 240));
+    }
+
+    dot(hubX, hubY, 9, rgb(25, 110, 115));
+    dot(hubX, hubY, 4, rgb(150, 255, 240));
+}
+
+
+// ============================================================
+// SOLAR PANELS
+// ============================================================
+
+void drawSolarPanel(int x, int y, int width)
+{
+    int panelColor = nightMode ? rgb(15, 60, 95)
+                               : rgb(25, 100, 140);
+
+    box(x, y, x + width, y + 11, panelColor);
+    outline(x, y, x + width, y + 11, rgb(65, 190, 220));
+
+    setcolor(rgb(45, 150, 185));
+
+    for (int px = x + 12; px < x + width; px += 12)
+        line(px, y + 1, px, y + 10);
+
+    line(x, y + 5, x + width, y + 5);
+}
+
+
+// ============================================================
+// BUILDINGS
+// ============================================================
+
+void drawBuilding(int index)
+{
+    int x = bx[index];
+    int width = bw[index];
+    int height = bh[index];
+    int ground = 570;
+    int top = ground - height;
+
+    int accents[BUILDINGS] =
+    {
+        rgb(230, 150, 80),
+        rgb(240, 140, 110),
+        rgb(70, 210, 205),
+        rgb(120, 195, 225),
+        rgb(105, 235, 135),
+        rgb(205, 220, 85),
+        rgb(240, 165, 75),
+        rgb(185, 120, 230)
+    };
+
+    int accent = accents[index];
+
+    int body = nightMode ? rgb(15, 37, 48)
+                         : rgb(105, 145, 150);
+
+    if (index == 0 || index == 1 || index == 6)
+        body = nightMode ? rgb(85, 60, 47)
+                         : rgb(190, 155, 115);
+
+    box(x, top, x + width, ground, body);
+
+    // Building outline and glow-like border.
+    outline(x - 2, top - 2, x + width + 2, ground + 2,
+            rgb(35, 90, 85));
+
+    outline(x, top, x + width, ground, accent);
+
+    // Roof for smaller houses.
+    if (index == 0 || index == 1 || index == 6)
+    {
+        int roof[] =
+        {
+            x - 7, top,
+            x + width / 2, top - 27,
+            x + width + 7, top
+        };
+
+        filledPoly(3, roof,
+                   nightMode ? rgb(120, 55, 45)
+                             : rgb(175, 80, 55));
+    }
+    else
+    {
+        box(x - 4, top - 6, x + width + 4, top,
+            rgb(25, 65, 65));
+
+        drawSolarPanel(x + width / 4, top - 18, width / 2);
+    }
+
+    int rows = (height - 45) / 35;
+    if (rows < 1)
+        rows = 1;
+
+    int cols = width >= 100 ? 3 : 2;
+    int windowW = 20;
+    int windowH = 23;
+    int gap = (width - cols * windowW) / (cols + 1);
+
+    for (int row = 0; row < rows; row++)
+    {
+        for (int col = 0; col < cols; col++)
+        {
+            int wx = x + gap + col * (windowW + gap);
+            int wy = top + 20 + row * 35;
+
+            bool lit = windowLit(index, row, col);
+
+            if (lit)
+            {
+                box(wx - 2, wy - 2, wx + windowW + 2,
+                    wy + windowH + 2, rgb(120, 120, 75));
+
+                box(wx, wy, wx + windowW, wy + windowH,
+                    rgb(255, 245, 175));
+            }
+            else
+            {
+                box(wx, wy, wx + windowW, wy + windowH,
+                    nightMode ? rgb(13, 40, 50)
+                              : rgb(80, 155, 180));
+            }
+
+            outline(wx, wy, wx + windowW, wy + windowH, accent);
+
+            setcolor(lit ? rgb(200, 185, 120) : accent);
+            line(wx + windowW / 2, wy,
+                 wx + windowW / 2, wy + windowH);
+
+            line(wx, wy + windowH / 2,
+                 wx + windowW, wy + windowH / 2);
+        }
+    }
+
+    // Entrance
+    int doorX = x + width / 2 - 9;
+    box(doorX, ground - 23, doorX + 18, ground,
+        rgb(28, 35, 35));
+
+    outline(doorX, ground - 23, doorX + 18, ground, accent);
+
+    // Building number
+    char label[20];
+    sprintf(label, "BLDG %d", index + 1);
+
+    settextstyle(DEFAULT_FONT, HORIZ_DIR, 1);
+    textAt(x + 8, ground + 7, label, accent);
+
+    if (!buildingOn[index])
+        textAt(x + 10, top + 5, "OFF", rgb(255, 110, 100));
+}
+
+
+// ============================================================
+// CENTRAL CONTROL TOWER
+// ============================================================
+
+void drawControlTower()
+{
+    int x = 605;
+    int y = 335;
+    int w = 42;
+    int h = 235;
+
+    box(x, y, x + w, y + h, rgb(22, 55, 65));
+    outline(x, y, x + w, y + h, rgb(110, 235, 235));
+
+    for (int row = 0; row < 8; row++)
+    {
+        for (int col = 0; col < 3; col++)
+        {
+            int px = x + 8 + col * 12;
+            int py = y + 12 + row * 24;
+
+            int color = ((frameNo / 20 + row + col) % 3 == 0)
+                        ? rgb(160, 255, 230)
+                        : rgb(50, 135, 145);
+
+            dot(px, py, 2, color);
+        }
+    }
+
+    textAt(x - 4, y + h + 8, "HUB", rgb(130, 255, 230));
+}
+
+
+// ============================================================
+// DASHBOARD
+// ============================================================
+
+void progressBar(int x, int y, int width, int percent, int color)
+{
+    if (percent < 0) percent = 0;
+    if (percent > 100) percent = 100;
+
+    box(x, y, x + width, y + 9, rgb(15, 35, 45));
+    outline(x, y, x + width, y + 9, rgb(70, 130, 135));
+
+    int filled = width * percent / 100;
+    if (filled > 0)
+        box(x + 1, y + 1, x + filled, y + 8, color);
+}
+
+void drawDashboard()
+{
+    int x = 850;
+    int y = 82;
+    int w = 330;
+    int h = 205;
+
+    box(x, y, x + w, y + h, rgb(8, 26, 31));
+    outline(x, y, x + w, y + h, rgb(70, 225, 135));
+
+    textAt(x + 12, y + 10, "// ENERGY DASHBOARD",
+           rgb(120, 255, 180));
+
+    int lit = countLitWindows();
+
+    // Illustrative simulation values.
+    int load = 10 + lit * 2;
+    if (load > 100) load = 100;
+
+    int solar = nightMode ? 5 : 75 + (frameNo / 40) % 20;
+    int battery = 68 + (frameNo / 150) % 12;
+    int savings = smartMode ? 62 : 15;
+
+    char text[100];
+
+    sprintf(text, "Village load: %d%%", load);
+    textAt(x + 12, y + 35, text, rgb(225, 240, 235));
+    progressBar(x + 12, y + 50, 300, load, rgb(255, 195, 80));
+
+    sprintf(text, "Solar output: %d%%", solar);
+    textAt(x + 12, y + 68, text, rgb(225, 240, 235));
+    progressBar(x + 12, y + 83, 300, solar, rgb(80, 200, 255));
+
+    sprintf(text, "Battery: %d%%", battery);
+    textAt(x + 12, y + 101, text, rgb(225, 240, 235));
+    progressBar(x + 12, y + 116, 300, battery, rgb(90, 235, 140));
+
+    sprintf(text, "Power savings: %d%%", savings);
+    textAt(x + 12, y + 134, text, rgb(225, 240, 235));
+    progressBar(x + 12, y + 149, 300, savings, rgb(85, 230, 205));
+
+    sprintf(text, "Lit rooms: %d   Grid: ONLINE", lit);
+    textAt(x + 12, y + 177, text, rgb(145, 250, 190));
+}
+
+
+// ============================================================
+// CONTROLS PANEL
+// ============================================================
+
+void drawHelp()
+{
+    if (!showHelp)
+        return;
+
+    int x = 20;
+    int y = 82;
+
+    box(x, y, x + 290, y + 190, rgb(8, 25, 35));
+    outline(x, y, x + 290, y + 190, rgb(70, 190, 200));
+
+    textAt(x + 12, y + 10, "// CONTROLS", rgb(125, 255, 235));
+    textAt(x + 12, y + 34, "1-8  : Toggle building", WHITE);
+    textAt(x + 12, y + 54, "M    : Smart / Normal mode", WHITE);
+    textAt(x + 12, y + 74, "D    : Day / Night", WHITE);
+    textAt(x + 12, y + 94, "A    : Auto-life on / off", WHITE);
+    textAt(x + 12, y + 114, "SPACE: Pause / Resume", WHITE);
+    textAt(x + 12, y + 134, "+/-  : Animation speed", WHITE);
+    textAt(x + 12, y + 154, "H    : Hide / Show controls", WHITE);
+    textAt(x + 12, y + 174, "ESC  : Exit", WHITE);
+}
+
+
+// ============================================================
+// ROAD AND CAR
+// ============================================================
+
+void drawRoad()
+{
+    box(0, 595, WIDTH, 660, rgb(35, 42, 45));
+
+    box(0, 590, WIDTH, 595, rgb(45, 200, 100));
+    box(0, 660, WIDTH, 665, rgb(45, 200, 100));
+
+    setcolor(rgb(205, 215, 210));
+    setlinestyle(SOLID_LINE, 0, 3);
+
+    for (int x = 20; x < WIDTH; x += 80)
+        line(x, 628, x + 35, 628);
+
+    setlinestyle(SOLID_LINE, 0, 1);
+}
+
+void drawCar()
+{
+    int x = carX;
+    int y = 615;
+
+    // Headlight beam
+    if (nightMode)
+    {
+        int beam[] =
+        {
+            x + 60, y + 15,
+            x + 100, y + 5,
+            x + 100, y + 25
+        };
+
+        filledPoly(3, beam, rgb(90, 95, 60));
+    }
+
+    box(x, y + 10, x + 60, y + 25, rgb(135, 225, 230));
+
+    int roof[] =
+    {
+        x + 12, y + 10,
+        x + 22, y,
+        x + 42, y,
+        x + 52, y + 10
+    };
+
+    filledPoly(4, roof, rgb(175, 245, 245));
+
+    box(x + 23, y + 3, x + 40, y + 9, rgb(40, 95, 110));
+
+    dot(x + 13, y + 26, 6, rgb(15, 20, 25));
+    dot(x + 48, y + 26, 6, rgb(15, 20, 25));
+
+    dot(x + 13, y + 26, 2, rgb(185, 195, 195));
+    dot(x + 48, y + 26, 2, rgb(185, 195, 195));
+
+    dot(x + 60, y + 15, 3, rgb(255, 245, 175));
+}
+
+
+// ============================================================
+// FOOTER
+// ============================================================
+
+void drawFooter()
+{
+    box(0, 670, WIDTH, HEIGHT, rgb(6, 22, 25));
+
+    char footer[180];
+
+    sprintf(footer,
+            "SMART VILLAGE DIGITAL OS  |  %s MODE  |  SOLAR GRID ONLINE  |  SPEED: %d  |  %s",
+            smartMode ? "SMART" : "NORMAL",
+            animationSpeed,
+            paused ? "PAUSED" : "RUNNING");
+
+    textAt(35, 680, footer, rgb(115, 245, 165));
+}
+
+
+// ============================================================
+// COMPLETE SCENE
+// ============================================================
+
+void drawScene()
+{
+    drawBackground();
+    drawEnergyConnections();
+
+    for (int i = 0; i < BUILDINGS; i++)
+        drawBuilding(i);
+
+    drawControlTower();
+
+    drawRoad();
+    drawCar();
+
+    drawHeader();
+    drawHelp();
+    drawDashboard();
+    drawFooter();
+}
+
+
+// ============================================================
+// UPDATE
+// ============================================================
+
+void updateAnimation()
+{
+    if (paused)
+        return;
+
+    frameNo += animationSpeed;
+    carX += animationSpeed + 1;
+
+    if (carX > WIDTH + 100)
+        carX = -100;
+
+    // Keep values bounded.
+    if (frameNo >= 360000)
+        frameNo = 0;
+}
+
+
+// ============================================================
+// KEYBOARD
+// ============================================================
+
+bool handleKeyboard()
+{
+    while (kbhit())
+    {
+        int key = getch();
+
+        // Ignore extended-key prefix and its following code.
+        if (key == 0 || key == 224)
+        {
+            getch();
+            continue;
+        }
+
+        if (key == 27)
+            return false;
+
+        if (key >= '1' && key <= '8')
+        {
+            int index = key - '1';
+            buildingOn[index] = !buildingOn[index];
+        }
+
+        if (key == 'm' || key == 'M')
+            smartMode = !smartMode;
+
+        if (key == 'd' || key == 'D')
+            nightMode = !nightMode;
+
+        if (key == 'a' || key == 'A')
+            autoLife = !autoLife;
+
+        if (key == 'h' || key == 'H')
+            showHelp = !showHelp;
+
+        if (key == ' ')
+            paused = !paused;
+
+        if ((key == '+' || key == '=') && animationSpeed < 6)
+            animationSpeed++;
+
+        if ((key == '-' || key == '_') && animationSpeed > 1)
+            animationSpeed--;
+    }
+
+    return true;
+}
+
+
+// ============================================================
+// MAIN
+// ============================================================
+
+int main()
+{
+    initwindow(WIDTH, HEIGHT, "Smart Village Power Saver");
+
+    bool running = true;
+
+    while (running)
+    {
+        currentPage = 1 - currentPage;
+
+        setactivepage(currentPage);
+        cleardevice();
+
+        drawScene();
+        setvisualpage(currentPage);
+
+        running = handleKeyboard();
+        updateAnimation();
+
+        delay(25);
+    }
+
+    closegraph();
+    return 0;
+}
