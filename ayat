@@ -1,0 +1,1217 @@
+#include <graphics.h>
+#include <conio.h>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <vector>
+
+using namespace std;
+
+// ============================================================
+// SETTINGS
+// ============================================================
+
+const int W = 1280;
+const int H = 720;
+const int BEDS = 3;
+const int MAX_WAITING = 8;
+
+enum PatientState {
+    WAITING,
+    MOVING_TO_BED,
+    TREATMENT,
+    LEAVING,
+    FINISHED
+};
+
+bool night = false;
+bool paused = false;
+
+int speedLevel = 2;  // Default speed: 2x
+int arrivalTimer = 0;
+int nextArrival = 250;
+
+int nextPatientId = 1;
+int totalArrived = 0;
+int totalDischarged = 0;
+
+double animTime = 0;
+double ambulanceX = -200;
+
+int bedX[BEDS] = {650, 650, 650};
+int bedY[BEDS] = {270, 405, 540};
+
+struct Patient {
+    int id;
+    int priority;
+    int state;
+    int bed;
+
+    double x, y;
+    double targetX, targetY;
+
+    double waitingTime;
+    double treatmentTime;
+    double treatmentDuration;
+};
+
+vector<Patient> patients;
+
+// ============================================================
+// DRAW HELPERS
+// ============================================================
+
+void box(int x1, int y1, int x2, int y2, int color) {
+    setcolor(color);
+    setfillstyle(SOLID_FILL, color);
+    bar(x1, y1, x2, y2);
+}
+
+void outline(int x1, int y1, int x2, int y2, int color) {
+    setcolor(color);
+    rectangle(x1, y1, x2, y2);
+}
+
+void oval(int x, int y, int rx, int ry, int color) {
+    setcolor(color);
+    setfillstyle(SOLID_FILL, color);
+    fillellipse(x, y, rx, ry);
+}
+
+void circleFill(int x, int y, int radius, int color) {
+    oval(x, y, radius, radius, color);
+}
+
+void polygon(int* points, int count, int color) {
+    setcolor(color);
+    setfillstyle(SOLID_FILL, color);
+    fillpoly(count, points);
+}
+
+void textAt(int x, int y, const char* text, int color, int bg) {
+    setcolor(color);
+    setbkcolor(bg);
+    outtextxy(x, y, const_cast<char*>(text));
+}
+
+void centerText(
+    int x1, int x2, int y,
+    const char* text, int color, int bg
+) {
+    setcolor(color);
+    setbkcolor(bg);
+
+    int width = textwidth(const_cast<char*>(text));
+    int x = (x1 + x2 - width) / 2;
+
+    outtextxy(x, y, const_cast<char*>(text));
+}
+
+void cross(int x, int y, int size, int color) {
+    box(x - size / 3, y - size, x + size / 3, y + size, color);
+    box(x - size, y - size / 3, x + size, y + size / 3, color);
+}
+
+void gradientBox(
+    int x1, int y1, int x2, int y2,
+    int r1, int g1, int b1,
+    int r2, int g2, int b2
+) {
+    int height = y2 - y1;
+    if (height <= 0) return;
+
+    for (int y = y1; y <= y2; y++) {
+        double t = (double)(y - y1) / height;
+
+        int r = (int)(r1 + (r2 - r1) * t);
+        int g = (int)(g1 + (g2 - g1) * t);
+        int b = (int)(b1 + (b2 - b1) * t);
+
+        setcolor(COLOR(r, g, b));
+        line(x1, y, x2, y);
+    }
+}
+
+void panel(
+    int x1, int y1, int x2, int y2,
+    int fill, int border
+) {
+    box(x1 + 4, y1 + 5, x2 + 4, y2 + 5, COLOR(139, 158, 160));
+    box(x1, y1, x2, y2, fill);
+    outline(x1, y1, x2, y2, border);
+}
+
+void depthBox(
+    int x, int y, int w, int h, int d,
+    int front, int top, int side
+) {
+    int topPoints[] = {
+        x, y,
+        x + d, y - d,
+        x + w + d, y - d,
+        x + w, y
+    };
+
+    int sidePoints[] = {
+        x + w, y,
+        x + w + d, y - d,
+        x + w + d, y + h - d,
+        x + w, y + h
+    };
+
+    polygon(topPoints, 4, top);
+    polygon(sidePoints, 4, side);
+    box(x, y, x + w, y + h, front);
+
+    setcolor(COLOR(102, 124, 128));
+    line(x, y, x + w, y);
+    line(x + w, y, x + w + d, y - d);
+    line(x + w, y, x + w, y + h);
+}
+
+int priorityColor(int priority) {
+    if (priority == 1) return COLOR(225, 65, 72);
+    if (priority == 2) return COLOR(240, 177, 40);
+    return COLOR(49, 170, 104);
+}
+
+const char* priorityName(int priority) {
+    if (priority == 1) return "CRITICAL";
+    if (priority == 2) return "URGENT";
+    return "STABLE";
+}
+
+// ============================================================
+// PATIENT LOGIC
+// ============================================================
+
+int countState(int state) {
+    int count = 0;
+
+    for (size_t i = 0; i < patients.size(); i++)
+        if (patients[i].state == state)
+            count++;
+
+    return count;
+}
+
+void addPatient() {
+    if (countState(WAITING) >= MAX_WAITING)
+        return;
+
+    Patient p;
+    int chance = rand() % 100;
+
+    p.id = nextPatientId++;
+    p.priority = chance < 20 ? 1 : chance < 55 ? 2 : 3;
+    p.state = WAITING;
+    p.bed = -1;
+
+    p.x = p.targetX = 45;
+    p.y = p.targetY = 575;
+
+    p.waitingTime = 0;
+    p.treatmentTime = 0;
+
+    if (p.priority == 1)
+        p.treatmentDuration = 650 + rand() % 250;
+    else if (p.priority == 2)
+        p.treatmentDuration = 500 + rand() % 200;
+    else
+        p.treatmentDuration = 350 + rand() % 200;
+
+    patients.push_back(p);
+    totalArrived++;
+}
+
+bool movePatient(Patient& p, double tx, double ty, double speed) {
+    double dx = tx - p.x;
+    double dy = ty - p.y;
+    double distance = sqrt(dx * dx + dy * dy);
+
+    if (distance < speed || distance < 0.1) {
+        p.x = tx;
+        p.y = ty;
+        return true;
+    }
+
+    p.x += dx / distance * speed;
+    p.y += dy / distance * speed;
+
+    return false;
+}
+
+void updateWaitingPositions() {
+    int index = 0;
+
+    for (size_t i = 0; i < patients.size(); i++) {
+        Patient& p = patients[i];
+
+        if (p.state != WAITING)
+            continue;
+
+        p.targetX = 80 + (index % 4) * 75;
+        p.targetY = 365 + (index / 4) * 80;
+
+        index++;
+    }
+}
+
+bool isBedOccupied(int bed) {
+    for (size_t i = 0; i < patients.size(); i++) {
+        if (patients[i].bed == bed &&
+            (patients[i].state == MOVING_TO_BED ||
+             patients[i].state == TREATMENT)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool isBedTreating(int bed) {
+    for (size_t i = 0; i < patients.size(); i++) {
+        if (patients[i].bed == bed &&
+            patients[i].state == TREATMENT) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void assignBeds() {
+    for (int b = 0; b < BEDS; b++) {
+        if (isBedOccupied(b))
+            continue;
+
+        int best = -1;
+
+        for (size_t i = 0; i < patients.size(); i++) {
+            Patient& p = patients[i];
+
+            if (p.state != WAITING)
+                continue;
+
+            if (best == -1 ||
+                p.priority < patients[best].priority ||
+                (p.priority == patients[best].priority &&
+                 p.waitingTime > patients[best].waitingTime)) {
+                best = (int)i;
+            }
+        }
+
+        if (best != -1) {
+            Patient& p = patients[best];
+
+            p.bed = b;
+            p.state = MOVING_TO_BED;
+            p.targetX = bedX[b];
+            p.targetY = bedY[b];
+        }
+    }
+}
+
+// ============================================================
+// BACKGROUND
+// ============================================================
+
+void background() {
+    if (night) {
+        gradientBox(
+            0, 74, W, 490,
+            40, 59, 78,
+            88, 108, 118
+        );
+    } else {
+        gradientBox(
+            0, 74, W, 490,
+            197, 223, 230,
+            236, 244, 242
+        );
+    }
+
+    int leftWall[] = {
+        0, 74,
+        30, 110,
+        30, 490,
+        0, 590
+    };
+
+    int rightWall[] = {
+        1250, 110,
+        1280, 74,
+        1280, 590,
+        1250, 490
+    };
+
+    int wallColor = night
+        ? COLOR(36, 52, 68)
+        : COLOR(170, 198, 205);
+
+    polygon(leftWall, 4, wallColor);
+    polygon(rightWall, 4, wallColor);
+
+    int floorPoints[] = {
+        30, 490,
+        1250, 490,
+        1280, 680,
+        0, 680
+    };
+
+    polygon(
+        floorPoints, 4,
+        night ? COLOR(91, 109, 114) : COLOR(190, 207, 204)
+    );
+
+    setcolor(
+        night ? COLOR(77, 96, 101) : COLOR(162, 184, 181)
+    );
+
+    for (int x = -400; x <= 1600; x += 110)
+        line(640, 490, x, 680);
+
+    line(20, 525, 1260, 525);
+    line(12, 565, 1268, 565);
+    line(5, 615, 1275, 615);
+
+    box(
+        30, 486, 1250, 491,
+        night ? COLOR(113, 133, 139) : COLOR(220, 235, 232)
+    );
+
+    box(0, 680, W, H, COLOR(17, 31, 48));
+}
+
+// ============================================================
+// HEADER
+// ============================================================
+
+void header() {
+    int navy = COLOR(17, 57, 85);
+
+    box(0, 0, W, 70, navy);
+    box(0, 70, W, 74, COLOR(35, 183, 180));
+
+    circleFill(45, 35, 23, COLOR(245, 253, 252));
+    cross(45, 35, 14, COLOR(221, 61, 73));
+
+    settextstyle(DEFAULT_FONT, HORIZ_DIR, 3);
+
+    centerText(
+        100, 1180, 12,
+        "HOSPITAL EMERGENCY ROOM",
+        WHITE, navy
+    );
+
+    settextstyle(DEFAULT_FONT, HORIZ_DIR, 1);
+
+    centerText(
+        100, 1180, 49,
+        "TRIAGE  |  TREATMENT  |  PATIENT MONITORING",
+        LIGHTCYAN, navy
+    );
+
+    int liveColor = ((int)(animTime * 2) % 2)
+        ? COLOR(75, 235, 146)
+        : COLOR(33, 160, 97);
+
+    circleFill(1201, 35, 6, liveColor);
+    textAt(1213, 31, "LIVE", WHITE, navy);
+}
+
+// ============================================================
+// WINDOWS AND WALL
+// ============================================================
+
+void hospitalWindow(int x, int y) {
+    int frame = COLOR(112, 145, 154);
+    int glass = night
+        ? COLOR(27, 48, 77)
+        : COLOR(119, 190, 217);
+
+    box(x + 6, y + 7, x + 156, y + 86, COLOR(145, 169, 174));
+    box(x, y, x + 150, y + 80, frame);
+    box(x + 7, y + 7, x + 143, y + 73, glass);
+
+    if (night) {
+        circleFill(x + 115, y + 22, 10, COLOR(246, 239, 207));
+
+        for (int i = 0; i < 8; i++)
+            putpixel(x + 12 + i * 15, y + 12 + (i * 17) % 45, WHITE);
+    } else {
+        circleFill(x + 115, y + 22, 10, COLOR(255, 220, 91));
+        oval(x + 30, y + 27, 15, 5, WHITE);
+        oval(x + 44, y + 25, 13, 6, WHITE);
+    }
+
+    setcolor(COLOR(230, 241, 241));
+    line(x + 75, y + 7, x + 75, y + 73);
+    line(x + 7, y + 40, x + 143, y + 40);
+}
+
+void wallClock(int x, int y) {
+    circleFill(x + 3, y + 3, 23, COLOR(126, 149, 154));
+    circleFill(x, y, 23, COLOR(250, 253, 252));
+
+    setcolor(COLOR(48, 71, 80));
+    circle(x, y, 23);
+
+    line(x, y - 20, x, y - 17);
+    line(x, y + 17, x, y + 20);
+    line(x - 20, y, x - 17, y);
+    line(x + 17, y, x + 20, y);
+
+    line(x, y, x, y - 13);
+    line(x, y, x + 10, y + 5);
+
+    circleFill(x, y, 2, COLOR(48, 71, 80));
+}
+
+void wallDecorations() {
+    hospitalWindow(55, 105);
+    hospitalWindow(225, 105);
+
+    wallClock(945, 125);
+
+    int red = COLOR(202, 57, 65);
+
+    box(1004, 104, 1219, 149, COLOR(137, 157, 159));
+    box(1000, 100, 1215, 145, red);
+    outline(1000, 100, 1215, 145, COLOR(255, 228, 228));
+
+    settextstyle(DEFAULT_FONT, HORIZ_DIR, 2);
+    centerText(1000, 1215, 114, "EMERGENCY", WHITE, red);
+    settextstyle(DEFAULT_FONT, HORIZ_DIR, 1);
+}
+
+// ============================================================
+// WAITING AREA
+// ============================================================
+
+void waitingArea() {
+    int panelColor = COLOR(235, 245, 244);
+    int titleColor = COLOR(35, 109, 139);
+
+    panel(35, 205, 390, 485, panelColor, COLOR(125, 163, 171));
+
+    box(36, 206, 389, 235, titleColor);
+    centerText(35, 390, 215, "WAITING AND TRIAGE", WHITE, titleColor);
+
+    oval(215, 312, 145, 14, COLOR(177, 198, 197));
+
+    depthBox(
+        70, 255, 275, 50, 12,
+        COLOR(61, 133, 151),
+        COLOR(164, 214, 215),
+        COLOR(39, 99, 118)
+    );
+
+    box(85, 268, 330, 294, COLOR(39, 106, 128));
+
+    centerText(
+        85, 330, 276,
+        "TRIAGE RECEPTION",
+        WHITE, COLOR(39, 106, 128)
+    );
+
+    // Reception monitor
+    box(160, 225, 205, 249, COLOR(36, 50, 61));
+    box(164, 229, 201, 245, COLOR(87, 184, 201));
+    box(179, 249, 185, 255, DARKGRAY);
+
+    setcolor(COLOR(192, 243, 240));
+    line(168, 234, 186, 234);
+    line(168, 238, 177, 238);
+
+    // Chairs
+    for (int row = 0; row < 2; row++) {
+        for (int col = 0; col < 4; col++) {
+            int x = 80 + col * 75;
+            int y = 365 + row * 80;
+
+            oval(x + 3, y + 30, 24, 6, COLOR(177, 196, 195));
+
+            depthBox(
+                x - 20, y + 10, 40, 10, 5,
+                COLOR(45, 119, 151),
+                COLOR(111, 181, 198),
+                COLOR(35, 86, 111)
+            );
+
+            box(x - 19, y - 8, x - 14, y + 12, COLOR(42, 100, 130));
+            box(x + 14, y - 8, x + 19, y + 12, COLOR(42, 100, 130));
+
+            setcolor(COLOR(76, 94, 101));
+            line(x - 15, y + 20, x - 15, y + 29);
+            line(x + 15, y + 20, x + 15, y + 29);
+        }
+    }
+}
+
+// ============================================================
+// TREATMENT AREA
+// ============================================================
+
+void treatmentPanel() {
+    int panelColor = COLOR(234, 244, 242);
+    int titleColor = COLOR(28, 113, 124);
+
+    panel(410, 165, 990, 600, panelColor, COLOR(124, 164, 165));
+
+    box(411, 166, 989, 195, titleColor);
+    centerText(
+        410, 990, 175,
+        "EMERGENCY TREATMENT & PROCEDURE AREA",
+        WHITE, titleColor
+    );
+
+    setcolor(COLOR(197, 219, 215));
+    line(425, 335, 970, 335);
+    line(425, 470, 970, 470);
+
+    setcolor(COLOR(247, 253, 251));
+    line(425, 201, 970, 201);
+    line(425, 341, 970, 341);
+    line(425, 476, 970, 476);
+}
+
+void monitor(int x, int y, bool active) {
+    box(x + 5, y + 5, x + 90, y + 58, COLOR(157, 177, 176));
+
+    depthBox(
+        x, y, 85, 52, 5,
+        COLOR(32, 43, 53),
+        COLOR(100, 114, 119),
+        COLOR(19, 29, 38)
+    );
+
+    int screen = COLOR(6, 19, 25);
+    box(x + 5, y + 5, x + 80, y + 40, screen);
+
+    setcolor(COLOR(20, 44, 46));
+
+    for (int gx = x + 10; gx < x + 80; gx += 10)
+        line(gx, y + 6, gx, y + 39);
+
+    for (int gy = y + 10; gy < y + 40; gy += 10)
+        line(x + 6, gy, x + 79, gy);
+
+    if (active) {
+        int shift = (int)(animTime * 12) % 12;
+
+        setcolor(COLOR(73, 244, 143));
+
+        line(x + 8, y + 24, x + 20 + shift, y + 24);
+        line(x + 20 + shift, y + 24, x + 25 + shift, y + 15);
+        line(x + 25 + shift, y + 15, x + 30 + shift, y + 33);
+        line(x + 30 + shift, y + 33, x + 36 + shift, y + 24);
+        line(x + 36 + shift, y + 24, x + 76, y + 24);
+    } else {
+        setcolor(COLOR(75, 101, 99));
+        line(x + 8, y + 24, x + 76, y + 24);
+    }
+
+    circleFill(
+        x + 72, y + 10, 2,
+        active ? COLOR(67, 230, 133) : DARKGRAY
+    );
+
+    box(x + 37, y + 52, x + 48, y + 63, DARKGRAY);
+    box(x + 25, y + 63, x + 60, y + 67, DARKGRAY);
+}
+
+void ivStand(int x, int y) {
+    int metal = COLOR(105, 123, 128);
+
+    setcolor(metal);
+    line(x, y - 55, x, y + 40);
+    line(x - 10, y - 55, x + 10, y - 55);
+    line(x - 12, y + 40, x + 12, y + 40);
+
+    box(x + 2, y - 50, x + 15, y - 28, COLOR(207, 243, 247));
+    outline(x + 2, y - 50, x + 15, y - 28, COLOR(78, 151, 169));
+
+    setcolor(COLOR(78, 151, 169));
+    line(x + 5, y - 34, x + 12, y - 34);
+    line(x + 8, y - 28, x + 8, y + 5);
+    line(x + 8, y + 5, x - 10, y + 15);
+}
+
+// Procedure lamp above each treatment bay
+void procedureLight(int x, int y, bool active) {
+    int metal = COLOR(110, 135, 139);
+
+    setcolor(metal);
+    line(x + 35, y - 31, x + 35, y - 20);
+    line(x + 35, y - 20, x + 18, y - 12);
+
+    oval(x, y - 10, 28, 8, COLOR(135, 156, 158));
+    oval(
+        x, y - 12, 27, 8,
+        active ? COLOR(250, 246, 206) : COLOR(217, 225, 220)
+    );
+
+    if (active) {
+        circleFill(x - 12, y - 12, 3, COLOR(255, 255, 230));
+        circleFill(x, y - 12, 3, COLOR(255, 255, 230));
+        circleFill(x + 12, y - 12, 3, COLOR(255, 255, 230));
+    }
+}
+
+// Doctor near the patient. Hands animate only during treatment.
+void doctor(int x, int y, bool active, int index) {
+    int skin = COLOR(225, 180, 145);
+    int glove = COLOR(207, 239, 242);
+    int movement = active
+        ? (int)(4 * sin(animTime * 4 + index))
+        : 0;
+
+    oval(x + 3, y + 53, 20, 6, COLOR(175, 190, 188));
+
+    // Legs
+    setcolor(COLOR(42, 58, 72));
+    setlinestyle(SOLID_LINE, 0, 6);
+    line(x - 7, y + 24, x - 8, y + 48);
+    line(x + 7, y + 24, x + 8, y + 48);
+    setlinestyle(SOLID_LINE, 0, 1);
+
+    // Coat
+    box(x - 15, y - 10, x + 20, y + 30, COLOR(190, 207, 206));
+    box(x - 18, y - 13, x + 16, y + 27, WHITE);
+    outline(x - 18, y - 13, x + 16, y + 27, COLOR(170, 190, 188));
+
+    // Face, surgical cap and mask
+    circleFill(x, y - 29, 13, skin);
+    box(x - 12, y - 41, x + 12, y - 35, COLOR(50, 141, 151));
+    box(x - 10, y - 28, x + 10, y - 20, COLOR(195, 238, 242));
+
+    cross(x - 1, y + 5, 5, COLOR(224, 72, 80));
+
+    if (active) {
+        // Arms reach toward the patient.
+        setcolor(WHITE);
+        setlinestyle(SOLID_LINE, 0, 4);
+
+        line(x - 16, y - 5, x - 30, y + 2 + movement);
+        line(x - 30, y + 2 + movement, x - 43, y - 5 + movement);
+
+        line(x + 14, y - 5, x + 4, y + 6 - movement);
+        line(x + 4, y + 6 - movement, x - 32, y + 2 - movement);
+
+        setlinestyle(SOLID_LINE, 0, 1);
+
+        circleFill(x - 43, y - 5 + movement, 3, glove);
+        circleFill(x - 32, y + 2 - movement, 3, glove);
+
+        // Small instrument
+        setcolor(COLOR(85, 104, 108));
+        line(x - 43, y - 5 + movement, x - 53, y - 1 + movement);
+    } else {
+        setcolor(skin);
+        setlinestyle(SOLID_LINE, 0, 4);
+
+        line(x - 17, y - 5, x - 26, y + 12);
+        line(x + 15, y - 5, x + 25, y + 10);
+
+        setlinestyle(SOLID_LINE, 0, 1);
+    }
+}
+
+void drawBed(int index) {
+    int x = bedX[index];
+    int y = bedY[index];
+
+    bool reserved = isBedOccupied(index);
+    bool treating = isBedTreating(index);
+
+    // Light is drawn behind the bed.
+    procedureLight(745, y - 55, treating);
+
+    oval(x + 15, y + 35, 130, 15, COLOR(179, 195, 192));
+
+    depthBox(
+        x - 105, y - 18, 210, 36, 12,
+        COLOR(145, 166, 170),
+        COLOR(223, 235, 233),
+        COLOR(98, 125, 129)
+    );
+
+    box(x - 98, y - 28, x + 100, y + 6, WHITE);
+    outline(x - 98, y - 28, x + 100, y + 6, COLOR(190, 211, 210));
+
+    box(x - 90, y - 24, x - 52, y + 1, COLOR(216, 244, 246));
+    outline(x - 90, y - 24, x - 52, y + 1, COLOR(129, 180, 189));
+
+    setcolor(COLOR(125, 151, 153));
+    line(x - 100, y + 8, x + 100, y + 8);
+
+    circleFill(x - 80, y + 26, 5, DARKGRAY);
+    circleFill(x + 80, y + 26, 5, DARKGRAY);
+    circleFill(x - 80, y + 26, 2, LIGHTGRAY);
+    circleFill(x + 80, y + 26, 2, LIGHTGRAY);
+
+    char label[32];
+    sprintf(label, "BED %d", index + 1);
+
+    textAt(
+        x - 105, y - 49,
+        label,
+        COLOR(32, 89, 109),
+        COLOR(234, 244, 242)
+    );
+
+    int statusBg = reserved
+        ? COLOR(255, 227, 221)
+        : COLOR(218, 244, 228);
+
+    int statusColor = reserved
+        ? COLOR(176, 63, 57)
+        : COLOR(30, 132, 78);
+
+    box(x + 10, y - 51, x + 105, y - 37, statusBg);
+
+    centerText(
+        x + 10, x + 105, y - 48,
+        treating ? "TREATING" : reserved ? "RESERVED" : "AVAILABLE",
+        statusColor, statusBg
+    );
+
+    monitor(790, y - 42, treating);
+    ivStand(510, y);
+}
+
+// ============================================================
+// CABINET AND EXIT
+// ============================================================
+
+void cabinet() {
+    depthBox(
+        1020, 200, 95, 155, 10,
+        COLOR(225, 235, 230),
+        COLOR(247, 252, 247),
+        COLOR(150, 180, 175)
+    );
+
+    box(1028, 210, 1107, 310, COLOR(158, 205, 204));
+    outline(1028, 210, 1107, 310, WHITE);
+
+    setcolor(WHITE);
+    line(1028, 245, 1107, 245);
+    line(1028, 278, 1107, 278);
+
+    for (int row = 0; row < 3; row++) {
+        for (int col = 0; col < 3; col++) {
+            int x = 1036 + col * 23;
+            int y = 225 + row * 33;
+
+            box(x, y, x + 12, y + 14, WHITE);
+
+            int cap = col == 0 ? COLOR(226, 85, 85)
+                    : col == 1 ? COLOR(75, 150, 190)
+                    : COLOR(80, 175, 120);
+
+            box(x + 3, y - 4, x + 9, y, cap);
+        }
+    }
+
+    cross(1068, 333, 9, COLOR(221, 69, 77));
+}
+
+void exitDoor() {
+    int green = COLOR(40, 132, 101);
+
+    box(1140, 245, 1235, 500, COLOR(145, 168, 163));
+
+    depthBox(
+        1130, 235, 90, 255, 8,
+        COLOR(88, 152, 128),
+        COLOR(171, 211, 195),
+        COLOR(54, 109, 89)
+    );
+
+    box(1140, 250, 1210, 390, COLOR(147, 199, 183));
+    outline(1140, 250, 1210, 390, WHITE);
+
+    setcolor(COLOR(196, 230, 218));
+    line(1148, 260, 1148, 378);
+    line(1152, 260, 1152, 350);
+
+    circleFill(1200, 420, 4, YELLOW);
+
+    box(1145, 205, 1205, 227, green);
+    centerText(1145, 1205, 212, "EXIT", WHITE, green);
+}
+
+// ============================================================
+// PATIENT DRAWING
+// ============================================================
+
+void standingPatient(const Patient& p) {
+    int x = (int)p.x;
+    int y = (int)p.y;
+
+    int skin = COLOR(225, 180, 145);
+    int swing = 0;
+
+    if (p.state == MOVING_TO_BED || p.state == LEAVING)
+        swing = (int)(5 * sin(animTime * 5 + p.id));
+
+    oval(x + 3, y + 26, 17, 5, COLOR(159, 178, 176));
+
+    setcolor(COLOR(48, 65, 75));
+    setlinestyle(SOLID_LINE, 0, 4);
+
+    line(x - 5, y + 7, x - 7 + swing, y + 23);
+    line(x + 5, y + 7, x + 7 - swing, y + 23);
+
+    setlinestyle(SOLID_LINE, 0, 1);
+
+    box(x - 9, y - 14, x + 10, y + 9, priorityColor(p.priority));
+    box(x + 7, y - 14, x + 11, y + 9, COLOR(93, 108, 106));
+
+    setcolor(skin);
+    line(x - 9, y - 10, x - 15, y + 3);
+    line(x + 10, y - 10, x + 16, y + 3);
+
+    circleFill(x, y - 24, 9, skin);
+    box(x - 8, y - 33, x + 8, y - 29, COLOR(55, 45, 40));
+
+    char label[24];
+    sprintf(label, "P%d", p.id);
+
+    int labelWidth = textwidth(label) + 8;
+    int left = x - labelWidth / 2;
+
+    box(left, y + 29, left + labelWidth, y + 41, COLOR(242, 250, 248));
+    outline(left, y + 29, left + labelWidth, y + 41, COLOR(150, 179, 177));
+    textAt(left + 4, y + 31, label, BLACK, COLOR(242, 250, 248));
+}
+
+void patientOnBed(const Patient& p) {
+    if (p.bed < 0 || p.bed >= BEDS)
+        return;
+
+    int x = bedX[p.bed];
+    int y = bedY[p.bed];
+
+    // Patient head
+    circleFill(x - 68, y - 11, 11, COLOR(225, 180, 145));
+
+    // Blanket indicates triage priority
+    box(x - 55, y - 24, x + 65, y + 2, priorityColor(p.priority));
+    box(x + 60, y - 24, x + 65, y + 2, COLOR(100, 120, 118));
+
+    setcolor(COLOR(244, 247, 243));
+    line(x - 50, y - 20, x + 55, y - 20);
+
+    char label[60];
+    sprintf(label, "P%d - %s", p.id, priorityName(p.priority));
+
+    textAt(
+        x - 100, y + 30,
+        label,
+        COLOR(31, 58, 68),
+        COLOR(234, 244, 242)
+    );
+
+    // Treatment progress bar
+    int left = x - 100;
+    int top = y + 45;
+    int width = 190;
+
+    box(left, top, left + width, top + 8, COLOR(83, 105, 108));
+
+    double progress = p.treatmentTime / p.treatmentDuration;
+    if (progress > 1.0) progress = 1.0;
+
+    int filled = (int)(width * progress);
+
+    if (filled > 0)
+        box(left, top, left + filled, top + 8, COLOR(58, 203, 125));
+}
+
+void drawPatients() {
+    for (size_t i = 0; i < patients.size(); i++) {
+        if (patients[i].state == TREATMENT)
+            patientOnBed(patients[i]);
+        else if (patients[i].state != FINISHED)
+            standingPatient(patients[i]);
+    }
+}
+
+// Doctors are drawn after patients so animated hands remain visible.
+void drawDoctors() {
+    for (int i = 0; i < BEDS; i++) {
+        bool active = isBedTreating(i);
+
+        // Active doctor stands near bed; otherwise beside monitor.
+        int x = active ? 790 : 930;
+        int y = bedY[i] - 2;
+
+        doctor(x, y, active, i);
+    }
+}
+
+// ============================================================
+// AMBULANCE
+// ============================================================
+
+void ambulance(int x, int y) {
+    int white = COLOR(247, 248, 244);
+    int red = COLOR(222, 65, 71);
+
+    oval(x + 85, y + 6, 95, 9, COLOR(137, 157, 155));
+
+    depthBox(
+        x, y - 48, 130, 48, 7,
+        white,
+        WHITE,
+        COLOR(192, 207, 205)
+    );
+
+    box(x + 130, y - 34, x + 165, y, white);
+
+    int front[] = {
+        x + 130, y - 34,
+        x + 150, y - 34,
+        x + 170, y - 15,
+        x + 170, y,
+        x + 130, y
+    };
+
+    polygon(front, 5, white);
+
+    box(x + 5, y - 22, x + 165, y - 16, red);
+    box(x + 135, y - 29, x + 150, y - 21, COLOR(158, 218, 232));
+
+    cross(x + 65, y - 35, 8, red);
+
+    circleFill(x + 35, y + 2, 10, COLOR(48, 55, 60));
+    circleFill(x + 140, y + 2, 10, COLOR(48, 55, 60));
+
+    circleFill(x + 35, y + 2, 4, LIGHTGRAY);
+    circleFill(x + 140, y + 2, 4, LIGHTGRAY);
+
+    int siren = ((int)(animTime * 5) % 2 == 0)
+        ? LIGHTRED
+        : LIGHTBLUE;
+
+    box(x + 48, y - 57, x + 75, y - 49, siren);
+    box(x + 166, y - 12, x + 170, y - 7, YELLOW);
+}
+
+// ============================================================
+// DASHBOARD
+// ============================================================
+
+void dashboard() {
+    int bg = COLOR(17, 31, 48);
+    int legendBg = COLOR(235, 246, 243);
+
+    char stats[180];
+    char controls[200];
+
+    sprintf(
+        stats,
+        "ARRIVED: %d   WAITING: %d   TO BED: %d   TREATING: %d   DISCHARGED: %d",
+        totalArrived,
+        countState(WAITING),
+        countState(MOVING_TO_BED),
+        countState(TREATMENT),
+        totalDischarged
+    );
+
+    textAt(15, 685, stats, LIGHTCYAN, bg);
+
+    sprintf(
+        controls,
+        "[N] New Patient  [D] Day/Night  [SPACE] Pause  [+/-] Speed: %dx  [ESC] Exit  %s",
+        speedLevel,
+        paused ? "PAUSED" : ""
+    );
+
+    textAt(15, 703, controls, WHITE, bg);
+
+    panel(1010, 605, 1250, 668, legendBg, COLOR(123, 160, 158));
+
+    textAt(
+        1020, 612,
+        "PATIENT PRIORITY",
+        COLOR(25, 67, 83),
+        legendBg
+    );
+
+    circleFill(1025, 636, 4, priorityColor(1));
+    textAt(1035, 632, "CRITICAL", COLOR(177, 43, 49), legendBg);
+
+    circleFill(1132, 636, 4, priorityColor(2));
+    textAt(1142, 632, "URGENT", COLOR(150, 105, 0), legendBg);
+
+    circleFill(1025, 654, 4, priorityColor(3));
+    textAt(1035, 650, "STABLE", COLOR(30, 130, 70), legendBg);
+}
+
+// ============================================================
+// UPDATE
+// ============================================================
+
+void update() {
+    if (paused)
+        return;
+
+    for (int step = 0; step < speedLevel; step++) {
+        animTime += 0.025;
+
+        ambulanceX += 2.0;
+
+        if (ambulanceX > W + 200)
+            ambulanceX = -200;
+
+        if (++arrivalTimer >= nextArrival) {
+            addPatient();
+            arrivalTimer = 0;
+            nextArrival = 180 + rand() % 180;
+        }
+
+        assignBeds();
+        updateWaitingPositions();
+
+        for (size_t i = 0; i < patients.size(); i++) {
+            Patient& p = patients[i];
+
+            if (p.state == WAITING) {
+                p.waitingTime++;
+                movePatient(p, p.targetX, p.targetY, 1.2);
+            }
+
+            else if (p.state == MOVING_TO_BED) {
+                if (movePatient(p, p.targetX, p.targetY, 1.5)) {
+                    p.state = TREATMENT;
+                    p.treatmentTime = 0;
+                }
+            }
+
+            else if (p.state == TREATMENT) {
+                p.treatmentTime++;
+
+                if (p.treatmentTime >= p.treatmentDuration) {
+                    p.state = LEAVING;
+                    p.bed = -1;
+                    p.targetX = 1175;
+                    p.targetY = 520;
+                }
+            }
+
+            else if (p.state == LEAVING) {
+                if (movePatient(p, p.targetX, p.targetY, 1.5)) {
+                    p.state = FINISHED;
+                    totalDischarged++;
+                }
+            }
+        }
+
+        for (size_t i = 0; i < patients.size();) {
+            if (patients[i].state == FINISHED)
+                patients.erase(patients.begin() + i);
+            else
+                i++;
+        }
+    }
+}
+
+// ============================================================
+// INPUT
+// ============================================================
+
+bool input() {
+    while (kbhit()) {
+        int key = getch();
+
+        if (key == 0 || key == 224) {
+            getch();
+            continue;
+        }
+
+        if (key == 27)
+            return false;
+
+        if (key == ' ')
+            paused = !paused;
+
+        else if (key == 'n' || key == 'N')
+            addPatient();
+
+        else if (key == 'd' || key == 'D')
+            night = !night;
+
+        else if ((key == '+' || key == '=') && speedLevel < 3)
+            speedLevel++;
+
+        else if ((key == '-' || key == '_') && speedLevel > 1)
+            speedLevel--;
+    }
+
+    return true;
+}
+
+// ============================================================
+// SCENE
+// ============================================================
+
+void scene() {
+    background();
+
+    wallDecorations();
+    waitingArea();
+    treatmentPanel();
+
+    cabinet();
+    exitDoor();
+
+    for (int i = 0; i < BEDS; i++)
+        drawBed(i);
+
+    drawPatients();
+    drawDoctors();
+
+    ambulance((int)ambulanceX, 660);
+
+    header();
+    dashboard();
+}
+
+// ============================================================
+// MAIN
+// ============================================================
+
+int main() {
+    srand((unsigned int)time(NULL));
+
+    initwindow(W, H, "Hospital Emergency Room Simulation");
+
+    for (int i = 0; i < 3; i++)
+        addPatient();
+
+    int page = 0;
+    bool running = true;
+
+    while (running) {
+        setactivepage(page);
+        cleardevice();
+
+        scene();
+
+        setvisualpage(page);
+        page = 1 - page;
+
+        update();
+        running = input();
+
+        delay(16);
+    }
+
+    closegraph();
+    return 0;
+}
