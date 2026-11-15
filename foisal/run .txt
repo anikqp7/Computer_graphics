@@ -1,0 +1,3 @@
+g++ village.cpp -o village.exe -lbgi -lgdi32 -lcomdlg32 -luuid -loleaut32 -lole32
+
+.\village.exe
